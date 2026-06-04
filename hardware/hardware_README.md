@@ -19,7 +19,7 @@ Afficheur déporté TM1637 4 digits — reçoit l'état des zones via MQTT et af
 | Surface Finish | HASL (lead-free) |
 | Copper Weight | 1oz |
 | Min Hole Size | 0.3mm |
-| Color | Green |
+| Color | Blue |
 
 Uploader le fichier `gerbers.zip` de chaque carte directement sur [jlcpcb.com](https://jlcpcb.com).
 
