@@ -1,0 +1,995 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Heating Controller v4</title>
+<style>
+:root {
+  --bg:       #0d1117;
+  --surface:  #161b22;
+  --border:   #30363d;
+  --accent:   #1f6feb;
+  --accent2:  #388bfd;
+  --green:    #3fb950;
+  --orange:   #d29922;
+  --red:      #f85149;
+  --purple:   #bc8cff;
+  --blue:     #58a6ff;
+  --dim:      #8b949e;
+  --text:     #e6edf3;
+  --radius:   10px;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Courier New', monospace;
+  font-size: 14px;
+  min-height: 100vh;
+}
+
+/* ── HEADER ── */
+header {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  padding: 12px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.logo {
+  font-size: 1.1em;
+  font-weight: bold;
+  color: var(--blue);
+  letter-spacing: 1px;
+}
+.fw-ver { color: var(--dim); font-size: 0.8em; }
+
+/* ── STATUS BADGES ── */
+.badges { display: flex; gap: 8px; flex-wrap: wrap; }
+.badge {
+  padding: 3px 10px;
+  border-radius: 20px;
+  font-size: 0.75em;
+  font-weight: bold;
+  letter-spacing: .5px;
+  border: 1px solid transparent;
+}
+.badge.ok   { background: #1a3d2a; color: var(--green);  border-color: #2d6a3f; }
+.badge.ko   { background: #3d1a1a; color: var(--red);    border-color: #6a2d2d; }
+.badge.warn { background: #3d2d10; color: var(--orange); border-color: #6a4d20; }
+.badge.info { background: #1a2d3d; color: var(--blue);   border-color: #2d4d6a; }
+
+/* ── LAYOUT ── */
+.page { max-width: 960px; margin: 0 auto; padding: 16px; }
+.row  { display: flex; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
+.col  { flex: 1; min-width: 200px; }
+
+/* ── CARDS ── */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px;
+}
+.card-title {
+  font-size: 0.7em;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  color: var(--dim);
+  margin-bottom: 12px;
+}
+
+/* ── ZONE CARDS ── */
+.zones-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin-bottom: 12px;
+}
+@media(max-width:600px) { .zones-grid { grid-template-columns: 1fr 1fr; } }
+
+.zone-card {
+  background: var(--surface);
+  border: 2px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 8px;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color .15s, background .15s;
+  position: relative;
+}
+.zone-card:hover           { border-color: var(--accent2); }
+.zone-card.selected        { border-color: var(--accent2); background: #1a2d3d; }
+.zone-card.inactive        { opacity: .4; pointer-events: none; }
+.zone-card.state-override  { border-color: var(--red); }
+.zone-card.state-restore   { border-color: var(--orange); }
+.zone-card.state-locked    { border-color: var(--purple); }
+
+.zone-id   { font-size: .7em; color: var(--dim); letter-spacing:1px; margin-bottom:4px; }
+.zone-cmd  { font-size: 1.4em; font-weight: bold; margin: 4px 0; line-height:1; }
+.zone-temp { font-size: .75em; color: var(--dim); margin-top: 2px; }
+.zone-iinst{ font-size: .7em;  margin-top: 4px; }
+.zone-state-badge {
+  position: absolute; top: 4px; right: 4px;
+  font-size: .6em; padding: 1px 5px;
+  border-radius: 4px; font-weight: bold;
+}
+
+.cmd-CONF  { color: var(--green);  }
+.cmd-ECO   { color: var(--blue);   }
+.cmd-HG    { color: var(--orange); }
+.cmd-STOP  { color: var(--red);    }
+.cmd-CM2   { color: var(--purple); }
+.cmd-dash  { color: var(--dim);    }
+
+/* ── MESURES GLOBALES ── */
+.measures-bar {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 10px 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 12px;
+  align-items: center;
+}
+.measure-item { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.measure-val  { font-size: 1.3em; font-weight: bold; line-height:1; }
+.measure-lbl  { font-size: .65em; color: var(--dim); text-transform: uppercase; letter-spacing:1px; }
+.measure-sep  { width: 1px; height: 32px; background: var(--border); }
+.iinst-ok   { color: var(--green);  }
+.iinst-warn { color: var(--orange); }
+.iinst-over { color: var(--red);    }
+
+/* ── COMMANDES ── */
+.cmd-btns {
+  display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px;
+}
+.btn {
+  padding: 7px 14px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: .85em;
+  font-weight: bold;
+  letter-spacing: .5px;
+  transition: opacity .12s, transform .08s;
+}
+.btn:hover  { opacity:.8; }
+.btn:active { transform: scale(.96); }
+.btn-CONF   { background:#1a3d2a; color:var(--green);  border-color:#2d6a3f; }
+.btn-ECO    { background:#1a2d3d; color:var(--blue);   border-color:#2d4d6a; }
+.btn-HG     { background:#3d2d10; color:var(--orange); border-color:#6a4d20; }
+.btn-CM2    { background:#2d1a3d; color:var(--purple); border-color:#4d2d6a; }
+.btn-STOP   { background:#3d1a1a; color:var(--red);    border-color:#6a2d2d; }
+.btn-sec    { background:#1a1f26; color:var(--dim);    border-color:var(--border); }
+.btn-pri    { background:var(--accent); color:#fff; border-color:var(--accent2); }
+
+/* ── TOGGLES ── */
+.toggle-row {
+  display: flex; align-items: center;
+  justify-content: space-between;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+}
+.toggle-row:last-child { border-bottom: none; }
+.toggle-label { color: var(--dim); font-size:.85em; }
+.toggle { position:relative; width:40px; height:22px; cursor:pointer; }
+.toggle input { opacity:0; width:0; height:0; }
+.slider {
+  position:absolute; inset:0;
+  background:#2d333b; border-radius:22px;
+  transition:.25s;
+}
+.slider:before {
+  content:''; position:absolute;
+  width:16px; height:16px; bottom:3px; left:3px;
+  background:#8b949e; border-radius:50%; transition:.25s;
+}
+input:checked + .slider           { background:#1f3d5c; }
+input:checked + .slider:before    { background:var(--blue); transform:translateX(18px); }
+
+/* ── CALENDRIER GRILLE ── */
+.cal-toolbar {
+  display:flex; gap:8px; align-items:center;
+  flex-wrap:wrap; margin-bottom:10px;
+}
+select, input[type=text], input[type=number] {
+  background: #1a1f26;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 8px;
+  font-family: inherit;
+  font-size: .85em;
+}
+.grid-wrap { overflow-x: auto; padding-bottom: 4px; }
+.slot-grid {
+  display: grid;
+  grid-template-columns: 36px repeat(48, 13px);
+  gap: 1px;
+  min-width: 660px;
+}
+.slot-hdr {
+  background: #1a1f26;
+  color: var(--dim);
+  font-size: 9px;
+  text-align: center;
+  padding: 2px 0;
+  border-radius: 2px;
+}
+.slot-row-label {
+  color: var(--dim);
+  font-size: 9px;
+  display:flex;
+  align-items:center;
+  justify-content:flex-end;
+  padding-right:4px;
+}
+.slot {
+  height: 24px; border-radius: 2px;
+  cursor: pointer; transition: opacity .08s;
+  border: 1px solid transparent;
+}
+.slot:hover { opacity:.7; border-color: rgba(255,255,255,.3); }
+.slot[data-cmd="CONF"] { background: #1a3d2a; }
+.slot[data-cmd="ECO"]  { background: #1a2d3d; }
+.slot[data-cmd="HG"]   { background: #3d2d10; }
+.slot[data-cmd="STOP"] { background: #3d1a1a; }
+.slot[data-cmd="CM2"]  { background: #2d1a3d; }
+.slot.current-slot     { outline: 2px solid var(--blue); }
+
+.legend {
+  display:flex; gap:12px; flex-wrap:wrap;
+  font-size:.75em; color:var(--dim);
+  margin: 8px 0;
+}
+.leg { display:flex; align-items:center; gap:5px; }
+.leg-dot {
+  width:12px; height:12px; border-radius:2px; flex-shrink:0;
+}
+
+/* ── ASSIGN GRILLE ── */
+.assign-grid {
+  display:grid;
+  grid-template-columns: 48px repeat(7, 1fr);
+  gap:4px;
+  font-size:.8em;
+}
+.assign-day  { text-align:center; color:var(--dim); padding:2px; }
+.assign-zone { color:var(--text); display:flex; align-items:center; font-size:.75em; }
+.assign-sel  {
+  width:100%;
+  background:#1a1f26; color:var(--text);
+  border:1px solid var(--border);
+  border-radius:4px; padding:2px;
+  font-size:.8em;
+}
+
+/* ── CONFIG ── */
+.cfg-row {
+  display:flex; align-items:center;
+  gap:8px; padding:6px 0;
+  border-bottom:1px solid var(--border);
+  font-size:.85em;
+}
+.cfg-row:last-child { border-bottom:none; }
+.cfg-lbl { flex:1; color:var(--dim); }
+.cfg-inp { width:72px; text-align:right; }
+
+/* ── TEMPO INDICATOR ── */
+.tempo-indicator {
+  display:flex; gap:8px; align-items:center;
+  padding:8px 12px;
+  border-radius:6px;
+  margin-top:8px;
+  font-size:.85em;
+}
+.tempo-BLUE  { background:#1a2d3d; border:1px solid #2d4d6a; }
+.tempo-WHITE { background:#3d3010; border:1px solid #6a5520; }
+.tempo-RED   { background:#3d1a1a; border:1px solid #6a2d2d; }
+.tempo-UNKNOWN{ background:#1a1f26; border:1px solid var(--border); color:var(--dim); }
+.tempo-dot {
+  width:10px; height:10px; border-radius:50%; flex-shrink:0;
+}
+.dot-BLUE  { background:#4fc3f7; }
+.dot-WHITE { background:var(--orange); }
+.dot-RED   { background:var(--red); }
+.dot-UNKNOWN{ background:var(--dim); }
+</style>
+</head>
+<body>
+
+<!-- ── HEADER ── -->
+<header>
+  <div class="logo">🔥 HEATING CTRL v4</div>
+  <div class="badges">
+    <span id="b-wifi"  class="badge ko">WiFi --</span>
+    <span id="b-mqtt"  class="badge ko">MQTT --</span>
+    <span id="b-linky" class="badge ko">Linky --</span>
+    <span id="b-ovld"  class="badge info">Délestage --</span>
+  </div>
+  <div class="fw-ver" id="fw-ver">ESP32_Heating v4.0</div>
+</header>
+
+<div class="page">
+
+  <!-- ── MESURES GLOBALES ── -->
+  <div class="measures-bar">
+    <div class="measure-item">
+      <div class="measure-val iinst-ok" id="m-iinst">--</div>
+      <div class="measure-lbl">Iinst (A)</div>
+    </div>
+    <div class="measure-sep"></div>
+    <div class="measure-item">
+      <div class="measure-val" id="m-isousc" style="color:var(--dim)">--</div>
+      <div class="measure-lbl">Isousc (A)</div>
+    </div>
+    <div class="measure-sep"></div>
+    <div class="measure-item">
+      <div class="measure-val" id="m-ptec" style="color:var(--blue)">----</div>
+      <div class="measure-lbl">PTEC</div>
+    </div>
+    <div class="measure-sep"></div>
+    <div class="measure-item">
+      <div class="measure-val" id="m-demain" style="color:var(--dim)">----</div>
+      <div class="measure-lbl">Demain</div>
+    </div>
+    <div class="measure-sep"></div>
+    <div class="measure-item">
+      <div class="measure-val" id="m-slot" style="color:var(--dim)">--:--</div>
+      <div class="measure-lbl">Heure</div>
+    </div>
+  </div>
+
+  <!-- ── ZONES ── -->
+  <div class="zones-grid" id="zone-grid"></div>
+
+  <!-- ── COMMANDES ── -->
+  <div class="card" style="margin-bottom:12px">
+    <div class="card-title">Commande → Zone <span id="sel-zone-lbl">Z1</span></div>
+    <div class="cmd-btns">
+      <button class="btn btn-CONF" onclick="sendCmd('CONF')">CONF</button>
+      <button class="btn btn-ECO"  onclick="sendCmd('ECO')">ECO</button>
+      <button class="btn btn-HG"   onclick="sendCmd('HG')">HG</button>
+      <button class="btn btn-CM2"  onclick="sendCmd('CM2')">CM2</button>
+      <button class="btn btn-STOP" onclick="sendCmd('STOP')">STOP</button>
+    </div>
+  </div>
+
+  <!-- ── CONFIG ROW ── -->
+  <div class="row">
+
+    <!-- Tempo -->
+    <div class="col card">
+      <div class="card-title">Option TEMPO EDF</div>
+      <div class="toggle-row">
+        <span class="toggle-label">Activer Tempo</span>
+        <label class="toggle"><input type="checkbox" id="t-enabled" onchange="cfgTempo()"><span class="slider"></span></label>
+      </div>
+      <div class="toggle-row">
+        <span class="toggle-label">Blanc HP → HG</span>
+        <label class="toggle"><input type="checkbox" id="t-whp" checked onchange="cfgTempo()"><span class="slider"></span></label>
+      </div>
+      <div class="toggle-row">
+        <span class="toggle-label">Rouge HP → HG</span>
+        <label class="toggle"><input type="checkbox" id="t-rhp" checked onchange="cfgTempo()"><span class="slider"></span></label>
+      </div>
+      <div class="toggle-row">
+        <span class="toggle-label">Rouge HC → HG</span>
+        <label class="toggle"><input type="checkbox" id="t-rhc" onchange="cfgTempo()"><span class="slider"></span></label>
+      </div>
+      <div id="tempo-indicator" class="tempo-indicator tempo-UNKNOWN">
+        <div class="tempo-dot dot-UNKNOWN" id="tempo-dot"></div>
+        <span id="tempo-txt">Tempo inconnu</span>
+      </div>
+    </div>
+
+    <!-- Délestage -->
+    <div class="col card">
+      <div class="card-title">Délestage surcharge</div>
+      <div class="toggle-row">
+        <span class="toggle-label">Activer délestage</span>
+        <label class="toggle"><input type="checkbox" id="o-enabled" checked onchange="cfgOvld()"><span class="slider"></span></label>
+      </div>
+      <div class="cfg-row">
+        <span class="cfg-lbl">Seuil détection (s)</span>
+        <input class="cfg-inp" type="number" id="o-thr" value="10" min="5" max="60">
+      </div>
+      <div class="cfg-row">
+        <span class="cfg-lbl">Délai restauration (s)</span>
+        <input class="cfg-inp" type="number" id="o-res" value="30" min="10" max="300">
+      </div>
+      <div class="cfg-row">
+        <span class="cfg-lbl">Commande fallback</span>
+        <select id="o-fb">
+          <option value="ECO">ECO</option>
+          <option value="HG">HG</option>
+          <option value="STOP">STOP</option>
+        </select>
+      </div>
+      <div style="display:flex;gap:6px;margin-top:8px">
+        <button class="btn btn-pri" style="flex:1" onclick="saveOvld()">Sauvegarder</button>
+        <button class="btn btn-STOP" style="flex:1" onclick="forceRestore()">Forcer restauration</button>
+      </div>
+    </div>
+
+    <!-- Zones actives -->
+    <div class="col card">
+      <div class="card-title">Configuration</div>
+      <div class="cfg-row">
+        <span class="cfg-lbl">Zones actives</span>
+        <select id="zone-count" onchange="setZoneCount(this.value)">
+          <option value="2">2 zones</option>
+          <option value="4" selected>4 zones</option>
+        </select>
+      </div>
+      <div class="cfg-row">
+        <span class="cfg-lbl">Calendrier actif</span>
+        <label class="toggle"><input type="checkbox" id="s-enabled" onchange="cfgSched()"><span class="slider"></span></label>
+      </div>
+      <div style="margin-top:12px">
+        <button class="btn btn-sec" style="width:100%;margin-bottom:6px" onclick="refreshState()">↻ Rafraîchir</button>
+        <button class="btn btn-STOP" style="width:100%;background:#3d1a1a" onclick="eraseEeprom()">⚠ Effacer EEPROM</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── CALENDRIER ── -->
+  <div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px">
+      <div class="card-title" style="margin:0">Calendrier de chauffage</div>
+    </div>
+
+    <div class="cal-toolbar">
+      <span style="color:var(--dim);font-size:.8em">Profil :</span>
+      <select id="prof-sel" onchange="loadProfile()">
+        <!-- généré JS -->
+      </select>
+      <input type="text" id="prof-name" placeholder="Nom profil" style="width:110px">
+      <button class="btn btn-sec" onclick="saveProfile()">Sauver</button>
+      <button class="btn btn-sec" onclick="fillAll('CONF')">Tout CONF</button>
+      <button class="btn btn-sec" onclick="fillAll('ECO')">Tout ECO</button>
+      <button class="btn btn-sec" onclick="fillAll('HG')">Tout HG</button>
+    </div>
+
+    <div class="legend">
+      <div class="leg"><div class="leg-dot" style="background:#1a3d2a;border:1px solid #2d6a3f"></div>CONF</div>
+      <div class="leg"><div class="leg-dot" style="background:#1a2d3d;border:1px solid #2d4d6a"></div>ECO</div>
+      <div class="leg"><div class="leg-dot" style="background:#3d2d10;border:1px solid #6a4d20"></div>HG</div>
+      <div class="leg"><div class="leg-dot" style="background:#3d1a1a;border:1px solid #6a2d2d"></div>STOP</div>
+      <div class="leg"><div class="leg-dot" style="background:#2d1a3d;border:1px solid #4d2d6a"></div>CM2</div>
+      <div style="margin-left:auto;color:var(--dim);font-size:.75em">
+        Clic=cycle · Glisser=peindre · Shift+Clic=plage
+      </div>
+    </div>
+
+    <div class="grid-wrap">
+      <div class="slot-grid" id="slot-grid"></div>
+    </div>
+
+    <!-- Assignation zone/profil/jour -->
+    <div style="margin-top:16px">
+      <div class="card-title">Assignation zones → profils par jour</div>
+      <div class="assign-grid" id="assign-grid"></div>
+      <button class="btn btn-pri" style="margin-top:10px" onclick="saveSchedule()">Sauvegarder assignations</button>
+    </div>
+  </div>
+
+</div><!-- /page -->
+
+<script>
+// =============================================================================
+// CONFIG
+// =============================================================================
+const CMDS     = ['CONF','ECO','HG','STOP','CM2'];
+const DAYS     = ['Lun','Mar','Mer','Jeu','Ven','Sam','Dim'];
+const N_ZONES  = 4;
+const N_SLOTS  = 48;
+const N_PROF   = 8;
+
+// =============================================================================
+// STATE
+// =============================================================================
+let selectedZone  = 1;
+let activeZones   = 4;
+let currentSlot   = 0;
+let isDragging    = false;
+let dragCmd       = 'ECO';
+let isShift       = false;
+let shiftStart    = -1;
+
+let zones = Array.from({length: N_ZONES}, (_,i) => ({
+  id: i+1, cmd:'ECO', state:'NORMAL',
+  temp:'--', iinst:'--', active: true
+}));
+
+let profiles = Array.from({length: N_PROF}, (_,i) => ({
+  index:i, name:`Profil ${i}`, active: i===0,
+  slots: Array(N_SLOTS).fill('ECO')
+}));
+
+let schedule = {
+  enabled: false,
+  zones: Array.from({length:N_ZONES},(_,i)=>({id:i+1,enabled:false,days:Array(7).fill(0)}))
+};
+
+let linkyData = { iinst:0, isousc:0, ptec:'----', demain:'----' };
+
+// =============================================================================
+// WEBSOCKET
+// =============================================================================
+let ws;
+function wsConnect() {
+  try {
+    ws = new WebSocket(`ws://${location.hostname}:81`);
+    ws.onopen    = ()=> ws.send(JSON.stringify({request:'getState'}));
+    ws.onmessage = e => { try { applyState(JSON.parse(e.data)); } catch(x){} };
+    ws.onclose   = ()=> setTimeout(wsConnect, 3000);
+    ws.onerror   = ()=> {};
+  } catch(e) {}
+}
+
+function applyState(s) {
+  // Firmware
+  if (s.fw) el('fw-ver').textContent = s.fw;
+
+  // Badges
+  if (s.wifiConnected !== undefined)
+    badge('b-wifi',  s.wifiConnected,  s.wifiConnected?`WiFi ${s.ip||'✓'}`:'WiFi ✗');
+  if (s.mqttConnected !== undefined)
+    badge('b-mqtt',  s.mqttConnected,  s.mqttConnected?'MQTT ✓':'MQTT ✗');
+  if (s.linkyConnected !== undefined)
+    badge('b-linky', s.linkyConnected, s.linkyConnected?'Linky ✓':'Linky ✗');
+  if (s.overload !== undefined)
+    badgeWarn('b-ovld', s.overload, s.overload?'⚠ DÉLESTÉ':'Délestage OK');
+
+  // Zones
+  if (s.zones) {
+    s.zones.forEach(z => {
+      zones[z.id-1] = {...zones[z.id-1], ...z};
+    });
+    renderZones();
+  }
+
+  // Linky
+  if (s.Iinst   !== undefined) { linkyData.iinst   = s.Iinst;   updateMeasures(); }
+  if (s.Isousc  !== undefined) { linkyData.isousc  = s.Isousc;  updateMeasures(); }
+  if (s.PTEC    !== undefined) { linkyData.ptec    = s.PTEC;    updateMeasures(); }
+  if (s.DEMAIN  !== undefined) { linkyData.demain  = s.DEMAIN;  updateMeasures(); }
+  if (s.overload!== undefined) { linkyData.overload= s.overload; updateMeasures(); }
+
+  // Températures
+  for (let z=1; z<=N_ZONES; z++) {
+    const k = `tempZ${z}`;
+    if (s[k] !== undefined) {
+      zones[z-1].temp = s[k] || '--';
+    }
+  }
+  renderZones();
+
+  // Tempo
+  if (s.tempoColor) updateTempo(s.tempoColor, s.tempoPeriod, s.tempoForceHG);
+  if (s.tempoEnabled  !== undefined) el('t-enabled').checked = s.tempoEnabled;
+  if (s.whiteHP       !== undefined) el('t-whp').checked     = s.whiteHP;
+  if (s.redHP         !== undefined) el('t-rhp').checked     = s.redHP;
+  if (s.redHC         !== undefined) el('t-rhc').checked     = s.redHC;
+
+  // Overload config
+  if (s.ovldEnabled   !== undefined) el('o-enabled').checked   = s.ovldEnabled;
+  if (s.ovldThreshold !== undefined) el('o-thr').value = Math.round(s.ovldThreshold/1000);
+  if (s.ovldRestore   !== undefined) el('o-res').value = Math.round(s.ovldRestore/1000);
+  if (s.ovldFallback  !== undefined) el('o-fb').value          = s.ovldFallback;
+
+  // Schedule
+  if (s.schedEnabled  !== undefined) el('s-enabled').checked   = s.schedEnabled;
+
+  // Heure / slot
+  if (s.slot !== undefined) {
+    currentSlot = s.slot;
+    const hh = Math.floor(s.slot/2), mm = (s.slot%2)*30;
+    el('m-slot').textContent = `${pad(hh)}:${pad(mm)}`;
+    highlightCurrentSlot();
+  }
+}
+
+// =============================================================================
+// ZONES RENDER
+// =============================================================================
+function buildZoneGrid() {
+  const g = el('zone-grid');
+  g.innerHTML = '';
+  for (let z=1; z<=N_ZONES; z++) {
+    const card = document.createElement('div');
+    card.id = `zc-${z}`;
+    card.className = `zone-card ${z===selectedZone?'selected':''}`;
+    card.onclick = ()=>selectZone(z);
+    card.innerHTML = `
+      <div class="zone-id">ZONE ${z}</div>
+      <div class="zone-cmd cmd-ECO" id="zcmd-${z}">ECO</div>
+      <div class="zone-temp" id="ztemp-${z}">-- °C</div>
+      <div class="zone-iinst" id="ziinst-${z}" style="color:var(--dim)"></div>
+      <div class="zone-state-badge" id="zbadge-${z}"></div>`;
+    g.appendChild(card);
+  }
+}
+
+function renderZones() {
+  for (let z=1; z<=N_ZONES; z++) {
+    const zd   = zones[z-1];
+    const card = el(`zc-${z}`);
+    if (!card) continue;
+
+    // Active/inactive
+    card.classList.toggle('inactive', !zd.active);
+
+    // Commande
+    const cmdEl = el(`zcmd-${z}`);
+    if (zd.active) {
+      cmdEl.textContent = zd.cmd || '--';
+      cmdEl.className   = `zone-cmd cmd-${zd.cmd}`;
+    } else {
+      cmdEl.textContent = '- -';
+      cmdEl.className   = 'zone-cmd cmd-dash';
+    }
+
+    // Température
+    const t = zd.temp && zd.temp !== '--' ? `${zd.temp} °C` : '-- °C';
+    el(`ztemp-${z}`).textContent = t;
+
+    // Iinst par zone (si disponible, sinon global)
+    const ii = el(`ziinst-${z}`);
+    if (zd.iinst && zd.iinst !== '--') {
+      ii.textContent = `${zd.iinst} A`;
+    } else {
+      ii.textContent = '';
+    }
+
+    // Badge état
+    const badge = el(`zbadge-${z}`);
+    const stateMap = {
+      OVERRIDE: {txt:'!OVR', bg:'var(--red)'},
+      RESTORE:  {txt:'~RST', bg:'var(--orange)'},
+      LOCKED:   {txt:'LOCK', bg:'var(--purple)'},
+    };
+    const st = stateMap[zd.state];
+    if (st && zd.active) {
+      badge.textContent  = st.txt;
+      badge.style.background = st.bg;
+      badge.style.color  = '#fff';
+      card.className = `zone-card state-${zd.state} ${z===selectedZone?'selected':''}`;
+    } else {
+      badge.textContent = '';
+      card.className = `zone-card ${z===selectedZone?'selected':''}`;
+    }
+  }
+}
+
+function selectZone(z) {
+  selectedZone = z;
+  el('sel-zone-lbl').textContent = `Z${z}`;
+  for (let i=1; i<=N_ZONES; i++) {
+    el(`zc-${i}`)?.classList.toggle('selected', i===z);
+  }
+}
+
+function setZoneCount(v) {
+  activeZones = parseInt(v);
+  zones.forEach((z,i) => z.active = (i < activeZones));
+  renderZones();
+  post('/api/config/zones', {count: activeZones});
+}
+
+// =============================================================================
+// MESURES GLOBALES
+// =============================================================================
+function updateMeasures() {
+  // Iinst avec couleur selon charge
+  const iinst  = linkyData.iinst  || 0;
+  const isousc = linkyData.isousc || 0;
+  const ratio  = isousc > 0 ? iinst / isousc : 0;
+  const iEl    = el('m-iinst');
+  iEl.textContent = iinst ? `${iinst}` : '--';
+  iEl.className   = 'measure-val ' + (
+    ratio >= 1   ? 'iinst-over' :
+    ratio >= 0.8 ? 'iinst-warn' : 'iinst-ok'
+  );
+  el('m-isousc').textContent = isousc || '--';
+  el('m-ptec').textContent   = linkyData.ptec   || '----';
+  el('m-demain').textContent = linkyData.demain  || '----';
+
+  // Badge délestage
+  const b = el('b-ovld');
+  if (linkyData.overload) {
+    b.textContent = '⚠ DÉLESTÉ';
+    b.className   = 'badge warn';
+  } else {
+    b.textContent = 'Délestage OK';
+    b.className   = 'badge ok';
+  }
+}
+
+// =============================================================================
+// TEMPO
+// =============================================================================
+function updateTempo(color, period, forceHG) {
+  const ind  = el('tempo-indicator');
+  const dot  = el('tempo-dot');
+  const txt  = el('tempo-txt');
+  ind.className = `tempo-indicator tempo-${color}`;
+  dot.className = `tempo-dot dot-${color}`;
+  const perStr = period==='HP'?'Heures Pleines':'Heures Creuses';
+  const fStr   = forceHG ? ' — ⚠ HG forcé' : '';
+  txt.textContent = `${color} · ${perStr}${fStr}`;
+}
+
+// =============================================================================
+// COMMANDES
+// =============================================================================
+function sendCmd(cmd) {
+  if (ws && ws.readyState===1) {
+    ws.send(JSON.stringify({zone: selectedZone, command: cmd}));
+  } else {
+    // Mode standalone : simule
+    zones[selectedZone-1].cmd = cmd;
+    renderZones();
+  }
+}
+
+// =============================================================================
+// CALENDRIER — GRILLE SLOTS
+// =============================================================================
+function buildSlotGrid() {
+  const grid = el('slot-grid');
+  grid.innerHTML = '';
+
+  // Ligne headers
+  grid.appendChild(mkEl('div','slot-row-label',''));
+  for (let s=0; s<N_SLOTS; s++) {
+    const hh = Math.floor(s/2);
+    const lbl = mkEl('div','slot-hdr', s%2===0 ? pad(hh):'');
+    grid.appendChild(lbl);
+  }
+
+  // Ligne slots
+  grid.appendChild(mkEl('div','slot-row-label','▼'));
+  for (let s=0; s<N_SLOTS; s++) {
+    const slot = document.createElement('div');
+    slot.className  = 'slot';
+    slot.dataset.slot = s;
+    slot.dataset.cmd  = 'ECO';
+    slot.title = slotLabel(s);
+    slot.addEventListener('mousedown', e => slotDown(e, s));
+    slot.addEventListener('mouseenter', e => slotEnter(e, s));
+    slot.addEventListener('mouseup',   e => slotUp(e, s));
+    grid.appendChild(slot);
+  }
+
+  document.addEventListener('mouseup', ()=>{ isDragging=false; isShift=false; });
+}
+
+function slotDown(e, s) {
+  e.preventDefault();
+  if (e.shiftKey) {
+    isShift    = true;
+    shiftStart = s;
+    dragCmd    = slotCmd(s); // garde la cmd courante pour la plage
+  } else {
+    isDragging = true;
+    // Cycle commande au clic
+    const cur  = slotCmd(s);
+    const next = CMDS[(CMDS.indexOf(cur)+1) % CMDS.length];
+    paintSlot(s, next);
+    dragCmd = next;
+  }
+}
+function slotEnter(e, s) {
+  if (isDragging)  paintSlot(s, dragCmd);
+  if (isShift)     paintRange(shiftStart, s, dragCmd);
+}
+function slotUp(e, s) {
+  if (isShift) { paintRange(shiftStart, s, dragCmd); isShift=false; shiftStart=-1; }
+  isDragging = false;
+}
+
+function slotCmd(s) {
+  return document.querySelector(`.slot[data-slot="${s}"]`)?.dataset.cmd || 'ECO';
+}
+function paintSlot(s, cmd) {
+  const el2 = document.querySelector(`.slot[data-slot="${s}"]`);
+  if (el2) el2.dataset.cmd = cmd;
+}
+function paintRange(a, b, cmd) {
+  const [lo,hi] = [Math.min(a,b), Math.max(a,b)];
+  for (let s=lo; s<=hi; s++) paintSlot(s, cmd);
+}
+function fillAll(cmd) {
+  for (let s=0; s<N_SLOTS; s++) paintSlot(s, cmd);
+}
+function highlightCurrentSlot() {
+  document.querySelectorAll('.slot').forEach(s => {
+    s.classList.toggle('current-slot', parseInt(s.dataset.slot)===currentSlot);
+  });
+}
+function slotLabel(s) {
+  const hh=Math.floor(s/2), mm=(s%2)*30;
+  const hn=s<47?Math.floor((s+1)/2):0, mn=((s+1)%2)*30;
+  return `${pad(hh)}:${pad(mm)} – ${pad(hn)}:${pad(mn)}`;
+}
+
+// =============================================================================
+// PROFILS
+// =============================================================================
+function buildProfSelect() {
+  const sel = el('prof-sel');
+  sel.innerHTML = '';
+  profiles.forEach((p,i)=>{
+    const o = document.createElement('option');
+    o.value = i; o.textContent = p.name || `Profil ${i}`;
+    sel.appendChild(o);
+  });
+}
+
+function loadProfile() {
+  const pi = parseInt(el('prof-sel').value);
+  el('prof-name').value = profiles[pi].name;
+  profiles[pi].slots.forEach((cmd,s) => paintSlot(s, cmd));
+}
+
+function saveProfile() {
+  const pi   = parseInt(el('prof-sel').value);
+  const name = el('prof-name').value.trim() || `Profil ${pi}`;
+  const slots = Array.from({length:N_SLOTS}, (_,s)=>slotCmd(s));
+  profiles[pi] = {index:pi, name, active:true, slots};
+  el('prof-sel').options[pi].textContent = name;
+  buildAssignGrid();
+  post('/api/profile', {index:pi, name, slots});
+}
+
+// =============================================================================
+// ASSIGNATION ZONE/PROFIL
+// =============================================================================
+function buildAssignGrid() {
+  const g = el('assign-grid');
+  g.innerHTML = '';
+
+  // Headers
+  g.appendChild(mkEl('div','assign-day',''));
+  DAYS.forEach(d => g.appendChild(mkEl('div','assign-day',d)));
+
+  // Lignes zones
+  for (let z=1; z<=N_ZONES; z++) {
+    g.appendChild(mkEl('div','assign-zone',`Z${z}`));
+    for (let d=0; d<7; d++) {
+      const sel = document.createElement('select');
+      sel.className = 'assign-sel';
+      sel.id = `asgn-z${z}d${d}`;
+      profiles.forEach((p,pi)=>{
+        const o = document.createElement('option');
+        o.value=pi; o.textContent=p.name||`P${pi}`; sel.appendChild(o);
+      });
+      if (schedule.zones[z-1]) sel.value = schedule.zones[z-1].days[d] ?? 0;
+      g.appendChild(sel);
+    }
+  }
+}
+
+function saveSchedule() {
+  const zs = [];
+  for (let z=1; z<=N_ZONES; z++) {
+    const days=[];
+    for(let d=0;d<7;d++) days.push(parseInt(el(`asgn-z${z}d${d}`)?.value||0));
+    zs.push({id:z, enabled:el('s-enabled').checked, days});
+  }
+  post('/api/schedule', {enabled:el('s-enabled').checked, zones:zs});
+}
+
+// =============================================================================
+// API
+// =============================================================================
+function cfgTempo() {
+  post('/api/config/tempo', {
+    enabled: el('t-enabled').checked,
+    whiteHP: el('t-whp').checked,
+    redHP:   el('t-rhp').checked,
+    redHC:   el('t-rhc').checked
+  });
+}
+function cfgOvld()  { /* déclenché par toggle */ }
+function saveOvld() {
+  post('/api/config/ovld', {
+    enabled:     el('o-enabled').checked,
+    thresholdMs: parseInt(el('o-thr').value)*1000,
+    restoreMs:   parseInt(el('o-res').value)*1000,
+    fallback:    el('o-fb').value
+  });
+}
+function forceRestore() {
+  if (!confirm('Forcer la restauration ?')) return;
+  post('/api/config/ovld', {forceRestore:true});
+}
+function cfgSched() { post('/api/schedule',{enabled:el('s-enabled').checked,zones:[]}); }
+function eraseEeprom() {
+  if (!confirm('⚠ Effacer toute la mémoire EEPROM ?')) return;
+  post('/api/eeprom/erase',{confirm:true});
+}
+function refreshState() {
+  fetch('/api/state').then(r=>r.json()).then(applyState).catch(()=>{});
+}
+
+function post(url, body) {
+  fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+    .then(r=>r.json()).then(r=>console.log(url,r)).catch(e=>console.warn(url,e));
+}
+
+// =============================================================================
+// HELPERS
+// =============================================================================
+const el    = id => document.getElementById(id);
+const pad   = n  => String(n).padStart(2,'0');
+function mkEl(tag,cls,txt) {
+  const e=document.createElement(tag); e.className=cls; e.textContent=txt; return e;
+}
+function badge(id, ok, txt) {
+  const b=el(id); b.textContent=txt; b.className=`badge ${ok?'ok':'ko'}`;
+}
+function badgeWarn(id, warn, txt) {
+  const b=el(id); b.textContent=txt; b.className=`badge ${warn?'warn':'ok'}`;
+}
+
+// =============================================================================
+// DEMO DATA (standalone — retiré quand ESP32 répond)
+// =============================================================================
+function loadDemoData() {
+  applyState({
+    fw: 'ESP32_Heating v4.0',
+    wifiConnected: true, ip:'192.168.1.50',
+    mqttConnected: true, linkyConnected: true,
+    overload: false,
+    zones: [
+      {id:1, cmd:'CONF',  state:'NORMAL',  active:true,  temp:'21.2'},
+      {id:2, cmd:'ECO',   state:'NORMAL',  active:true,  temp:'18.5'},
+      {id:3, cmd:'HG',    state:'OVERRIDE',active:true,  temp:'12.1'},
+      {id:4, cmd:'STOP',  state:'NORMAL',  active:true,  temp:'--'},
+    ],
+    Iinst: 14, Isousc: 30, PTEC: 'HPJB', DEMAIN: 'BLAN',
+    tempoColor:'BLUE', tempoPeriod:'HP', tempoForceHG:false,
+    tempoEnabled:false, whiteHP:true, redHP:true, redHC:false,
+    ovldEnabled:true, ovldThreshold:10000, ovldRestore:30000, ovldFallback:'ECO',
+    schedEnabled:false, slot:22
+  });
+}
+
+// =============================================================================
+// INIT
+// =============================================================================
+function init() {
+  buildZoneGrid();
+  buildSlotGrid();
+  buildProfSelect();
+  buildAssignGrid();
+  loadProfile();
+  loadDemoData();         // Données de démo visibles sans ESP32
+  wsConnect();
+
+  // Fetch initial si connecté à l'ESP32
+  fetch('/api/state').then(r=>r.json()).then(applyState).catch(()=>{});
+  fetch('/api/profiles').then(r=>r.json()).then(d=>{
+    if(d.profiles){profiles=d.profiles;buildProfSelect();buildAssignGrid();loadProfile();}
+  }).catch(()=>{});
+  fetch('/api/schedule').then(r=>r.json()).then(d=>{
+    schedule=d; buildAssignGrid();
+    if(d.enabled!==undefined) el('s-enabled').checked=d.enabled;
+  }).catch(()=>{});
+}
+
+window.addEventListener('load', init);
+</script>
+</body>
+</html>

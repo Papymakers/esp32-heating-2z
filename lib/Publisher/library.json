@@ -1,0 +1,6 @@
+{
+  "name": "Publisher",
+  "dependencies": {
+    "knolleary/PubSubClient": "^2.8"
+  }
+}
