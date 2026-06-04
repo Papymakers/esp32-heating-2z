@@ -183,3 +183,48 @@ MIT — voir [LICENSE](LICENSE)
 ## Auteur
 
 Denis Mattera — 2025
+
+---
+
+## Hardware
+
+Les fichiers de fabrication sont disponibles dans le dossier `hardware/` :
+
+```
+hardware/
+├── main-board/
+│   ├── schematic.svg       # Schéma électronique
+│   ├── pcb_top.svg         # Vue du PCB
+│   ├── gerbers.zip         # Fichiers de fabrication JLCPCB
+│   └── BOM.csv             # Liste des composants
+├── display-board/
+│   ├── schematic.svg
+│   ├── pcb_top.svg
+│   ├── gerbers.zip
+│   └── BOM.csv
+└── README.md               # Notes de fabrication (JLCPCB settings)
+```
+
+---
+
+## Commander des cartes
+
+Ce projet représente 4 ans de développement, de prototypage et de tests en conditions réelles. Le firmware est open source — si vous souhaitez soutenir le projet ou gagner du temps, les cartes sont disponibles à la commande.
+
+| Option | Contenu | Prix indicatif |
+|--------|---------|----------------|
+| **PCB nu** | Carte principale + carte affichage, sans composants | 15€ |
+| **Kit** | PCB + tous les composants sélectionnés et testés | 35€ |
+| **Carte assemblée** | Prête à flasher et configurer | 55€ |
+
+*Frais de port en sus. Expédition depuis la France.*
+
+📧 Commandes et questions : **support@papymakers.com**
+
+---
+
+## Contact & Support
+
+- **Bug / question technique** → ouvrir une [Issue](../../issues)
+- **Commandes** → support@papymakers.com
+- **Discussions générales** → onglet [Discussions](../../discussions)
