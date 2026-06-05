@@ -10,7 +10,7 @@ Contrôle les radiateurs via fil pilote (6 ordres), lecture du compteur Linky, g
 
 ## Fonctionnalités
 
-- Pilotage fil pilote **2 zones** — 5 ordres : STOP, Hors-Gel, ECO, CONFORT, CM2
+- Pilotage fil pilote **2 zones** — 5 ordres : STOP, Hors-Gel, ECO, CONFORT, Confort -2°C
 - Lecture trame **Linky TIC** (mode historique)
 - Gestion **Tempo EDF** — jours Bleu/Blanc/Rouge avec compteurs saison (NVS Flash)
 - **Délestage automatique** sur dépassement de puissance souscrite
@@ -219,7 +219,7 @@ Ce projet représente 4 ans de développement, de prototypage et de tests en con
 
 *Frais de port en sus. Expédition depuis la France.*
 
-📧 Commandes et questions : **support@papymakers.com**
+📧 Commandes et questions : **support@papymakers.com** - https://papymakers.com/
 
 ---
 
