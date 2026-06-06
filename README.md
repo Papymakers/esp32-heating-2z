@@ -1,4 +1,4 @@
-# ESP32 Heating Controller — 2 zones (TM1637)
+# Gestionnaire de chauffage 2 zones — ESP32 fil pilote + Linky + MQTT
 
 Gestionnaire de chauffage électrique à fil pilote pour **2 zones**, basé sur ESP32-C6.  
 Contrôle les radiateurs via fil pilote (6 ordres), lecture du compteur Linky, gestion Tempo EDF, interface Web et MQTT.
