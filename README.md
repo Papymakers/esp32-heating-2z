@@ -1,7 +1,7 @@
 # Gestionnaire de chauffage 2 zones — ESP32 fil pilote + Linky + MQTT
 
 Gestionnaire de chauffage électrique à fil pilote pour **2 zones**, basé sur ESP32-C6.  
-Contrôle les radiateurs via fil pilote (6 ordres), lecture du compteur Linky, gestion Tempo EDF, interface Web et MQTT.
+Contrôle les radiateurs via fil pilote (5 ordres), lecture du compteur Linky, gestion Tempo EDF, interface Web et MQTT.
 
 > **Variante matérielle :** affichage TM1637 (4 digits 7 segments) — PCB en production.  
 > La variante 4 zones avec afficheur OLED est disponible dans le repo [`esp32-heating-4z`](../esp32-heating-4z).
@@ -213,9 +213,9 @@ Ce projet représente 4 ans de développement, de prototypage et de tests en con
 
 | Option | Contenu | Prix indicatif |
 |--------|---------|----------------|
-| **PCB nu** | Carte principale + carte affichage, sans composants | 15€ |
-| **Kit** | PCB + tous les composants sélectionnés et testés | 35€ |
-| **Carte assemblée** | Prête à flasher et configurer | 55€ |
+| **PCB nu** | Carte principale | 15€ |
+| **Kit** | PCB + tous les composants sélectionnés et testés | 45€ |
+| **Carte assemblée** | Prête à flasher et configurer | 65€ |
 
 *Frais de port en sus. Expédition depuis la France.*
 
