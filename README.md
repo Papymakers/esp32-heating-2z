@@ -214,8 +214,6 @@ Ce projet représente 4 ans de développement, de prototypage et de tests en con
 | Option | Contenu | Prix indicatif |
 |--------|---------|----------------|
 | **PCB nu** | Carte principale | 15€ |
-| **Kit** | PCB + tous les composants sélectionnés et testés | 45€ |
-| **Carte assemblée** | Prête à flasher et configurer | 65€ |
 
 *Frais de port en sus. Expédition depuis la France.*
 
