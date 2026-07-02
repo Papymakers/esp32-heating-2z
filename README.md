@@ -12,12 +12,12 @@ Contrôle les radiateurs via fil pilote (5 ordres), lecture du compteur Linky, g
 
 - Pilotage fil pilote **2 zones** — 5 ordres : STOP, Hors-Gel, ECO, CONFORT, Confort -2°C
 - Lecture trame **Linky TIC** (mode historique)
-- Gestion **Tempo EDF** — jours Bleu/Blanc/Rouge avec compteurs saison (NVS Flash)
+- Gestion **Tempo EDF** — jours Bleu/Blanc/Rouge avec compteurs de saison (rouges/blancs) sauvegardés en EEPROM
 - **Délestage automatique** sur dépassement de puissance souscrite
-- Interface **Web responsive** embarquée (WebSockets)
+- Interface **Web responsive** embarquée (rafraîchissement par polling HTTP)
 - Communication **MQTT** complète (status, commandes, log)
-- **Planificateur** hebdomadaire configurable depuis la WebUI
-- Sauvegarde des états en **EEPROM I2C** (24C02 ou 24C32)
+- **Planificateur** hebdomadaire configurable depuis la WebUI *(nécessite une EEPROM 24C32 — voir [note ci-dessous](#planificateur-hebdomadaire-eeprom-24c32))*
+- Sauvegarde des états en **EEPROM I2C** (24C02 par défaut, ou 24C32 pour le planificateur)
 - Boutons physiques avec gestion multi-clic et appui long
 - LED RGB de statut système
 
@@ -92,9 +92,20 @@ inline constexpr char MQTT_BROKER[] = "192.168.1.x";
 Choisir le type d'EEPROM dans `config.h` :
 
 ```cpp
-#define EEPROM_TYPE_24C02   // 256 octets (défaut)
-// #define EEPROM_TYPE_24C32   // 4KB
+#define EEPROM_TYPE_24C02   // 256 octets (défaut) — sans planificateur
+// #define EEPROM_TYPE_24C32   // 4KB — active le planificateur hebdomadaire
 ```
+
+> **24C02 (256 octets)** — suffisant pour la persistance des états de zones, des
+> réglages Tempo et du délestage. Le **planificateur hebdomadaire est désactivé**
+> (pas assez de mémoire pour stocker les profils horaires).
+>
+> **24C32 (4 Ko)** — active le planificateur hebdomadaire. Remplacement **pin-to-pin
+> direct** de la 24C02 (même boîtier 8 broches, même adresse I2C 0x50, A0/A1/A2 à GND).
+> Référence testée : **Microchip AT24C32E** (boîtier PDIP-8 : `AT24C32E-PUM`).
+> Après remplacement de la puce et bascule du `#define`, effacer l'EEPROM au premier
+> démarrage (bouton BOOT maintenu, ou depuis la page web) pour initialiser le nouveau
+> plan mémoire.
 
 ### Compilation et upload
 
@@ -112,7 +123,25 @@ Accéder via `http://<LOCAL_IP>` depuis le réseau local.
 - Contrôle manuel de chaque zone
 - Visualisation de la puissance Linky en temps réel
 - Période Tempo du jour (Bleu/Blanc/Rouge)
-- Planificateur hebdomadaire
+- Compteurs de jours Tempo consommés sur la saison (rouges/blancs)
+- Réglages du délestage automatique
+- Planificateur hebdomadaire *(visible uniquement avec une EEPROM 24C32)*
+
+![Interface Web du gestionnaire](docs/webui.png)
+
+### Planificateur hebdomadaire (EEPROM 24C32)
+
+La section **Calendrier de chauffage** de la page web n'apparaît que si le firmware
+détecte une EEPROM 24C32. Avec une 24C02, cette section est automatiquement masquée.
+
+Le planificateur repose sur des **profils réutilisables** : chaque profil définit une
+journée complète en tranches de 30 minutes (48 créneaux), auxquelles on affecte un ordre
+(STOP / HG / ECO / CONFORT / CM2). On associe ensuite un profil à chaque zone. L'éditeur
+web permet de peindre les créneaux à la souris (clic = cycle d'ordre, glisser = remplir)
+et de sauvegarder les profils et leurs affectations.
+
+Le planificateur reste **non prioritaire** : une commande manuelle (bouton, web ou MQTT),
+un délestage ou une règle Tempo prennent le pas sur l'ordre programmé.
 
 ---
 
@@ -155,7 +184,7 @@ esp32-heating-2z/
 │   ├── DisplayManager/   # Affichage TM1637
 │   ├── StorageManager/   # EEPROM I2C (24C02/24C32)
 │   ├── Publisher/        # Publication MQTT
-│   └── WebUI/            # Interface Web + WebSockets
+│   └── WebUI/            # Interface Web + serveur HTTP
 ├── index.html            # WebUI (embarquée dans le firmware)
 ├── partitions.csv        # Table de partitions 8MB Flash
 ├── platformio.ini        # Configuration PlatformIO
