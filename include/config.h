@@ -13,7 +13,7 @@
 // =============================================================================
 
 inline constexpr char FW_NAME[]    = "ESP32_Heating";
-inline constexpr char FW_VERSION[] = "4.0-2Z";
+inline constexpr char FW_VERSION[] = "4.1-2Z";
 #define BUILD_ID __DATE__ " " __TIME__
 
 inline void getVersion(char* buffer, size_t size) {

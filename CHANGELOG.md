@@ -1,50 +1,52 @@
 # Changelog
 
-Toutes les évolutions notables de ce projet sont documentées ici.  
-Format : [Semantic Versioning](https://semver.org/lang/fr/)
+Toutes les évolutions notables de ce projet sont documentées dans ce fichier.
 
----
+Le format s'appuie sur [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/),
+et le projet suit un versionnage de type [SemVer](https://semver.org/lang/fr/)
+adapté (suffixe `-2Z` pour la variante 2 zones / TM1637).
 
-## [4.0-2Z] — 2025
+## [4.1-2Z] — 2025-07-01
 
-### Refonte complète en architecture modulaire (libs PlatformIO)
+### Ajouté
+- **Planificateur hebdomadaire** documenté et activable avec une EEPROM 24C32.
+  Profils réutilisables de 48 créneaux (30 min), affectation d'un profil par zone,
+  édition à la souris depuis la WebUI. Reste non prioritaire face aux commandes
+  manuelles, au délestage et aux règles Tempo.
+- Compteurs de jours Tempo consommés sur la saison (rouges / blancs), sauvegardés
+  en EEPROM, avec remise à zéro automatique au 1ᵉʳ novembre.
+- Topic MQTT `heatingCtrl_v4/tempo/setCounters` pour corriger manuellement les
+  compteurs Tempo (`{"red":N,"white":N}`).
+- Section `docs/` avec instructions pour la capture d'écran de la WebUI.
 
-**Ajouts**
-- Architecture découpée en bibliothèques indépendantes : ZoneManager, CommandHandler, LinkyReader, TempoManager, OverloadManager, ScheduleManager, DisplayManager, StorageManager, Publisher, WebUI
-- Planificateur hebdomadaire configurable depuis la WebUI
-- Gestion dual EEPROM : 24C02 (256B) et 24C32 (4KB) sélectionnable par `#define`
-- Compteurs saison Tempo (jours rouges/blancs) persistants en NVS Flash
-- LED RGB de statut système (WiFi, MQTT, délestage)
-- Bouton BOOT : appui court = reset WiFi, appui long (5s) = reset usine
-- Support multi-clic sur switches physiques
-- WebSockets pour mise à jour temps réel de la WebUI
-- Interface Web responsive avec visualisation Linky et Tempo
+### Modifié
+- Le README précise désormais que le planificateur nécessite une 24C32
+  (remplacement pin-to-pin direct de la 24C02, réf. testée `AT24C32E-PUM`).
+- Affichage TM1637 : le digit d'état (WiFi / Linky) suit directement l'état des
+  trames TIC (STX/ETX), sans temporisation. Affichage permanent (plus de mise en
+  veille), pour que l'état reste toujours visible.
+- Gestion des boutons : un bouton par zone (SW1 → zone 1, SW2 → zone 2), avec une
+  fenêtre de confirmation non bloquante filtrant les impulsions parasites.
+- Documentation corrigée : compteurs Tempo en EEPROM (et non NVS Flash),
+  rafraîchissement WebUI par polling HTTP (et non WebSockets).
 
-**Modifications**
-- Migration vers PlatformIO / VS Code (depuis Arduino IDE)
-- Migration vers ESP32-C6-DevKitC-1-N8 (8MB Flash)
-- Table de partitions personnalisée (OTA + SPIFFS)
-- Commande CM2 : cycle automatique 7s/293s conforme à la norme fil pilote
+### Corrigé
+- Commandes parasites au basculement HC→HP filtrées par la confirmation du niveau
+  bas maintenu sur l'entrée bouton.
+- Le délestage n'écrase plus une zone déjà à l'arrêt (STOP).
+- La désactivation du mode Tempo restaure correctement la dernière commande
+  enregistrée de chaque zone.
 
-**Corrections**
-- Debounce ISR robuste via lecture directe registre GPIO
-- Reconnexion WiFi/MQTT automatique avec compteur d'échecs
+## [4.0-2Z] — 2025-05-26
 
----
+### Ajouté
+- Version initiale de la variante 2 zones avec afficheur TM1637.
+- Pilotage fil pilote 2 zones (STOP, Hors-Gel, ECO, CONFORT, CM2).
+- Lecture trame Linky TIC (mode historique).
+- Gestion Tempo EDF (jours Bleu / Blanc / Rouge).
+- Délestage automatique sur dépassement de puissance souscrite.
+- Interface Web embarquée et communication MQTT.
+- Persistance des états en EEPROM I2C (24C02 / 24C32).
 
-## [3.7] — 2024
-
-### Version Arduino IDE — fichier monolithique
-
-**Fonctionnalités présentes**
-- Gestion 2 zones fil pilote (STOP, HG, ECO, CONFORT)
-- Lecture Linky TIC historique
-- Tempo EDF basique
-- MQTT (PubSubClient)
-- WebUI simple (WebServer)
-- Affichage TM1637
-- EEPROM 24C02
-
----
-
-*Ce fichier est maintenu manuellement à chaque évolution significative.*
+[4.1-2Z]: https://github.com/papymakers/esp32-heating-2z/releases/tag/v4.1-2Z
+[4.0-2Z]: https://github.com/papymakers/esp32-heating-2z/releases/tag/v4.0-2Z

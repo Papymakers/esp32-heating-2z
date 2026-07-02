@@ -1,10 +1,14 @@
 # Gestionnaire de chauffage 2 zones — ESP32 fil pilote + Linky + MQTT
 
+> 🆕 **Nouveau (juillet 2025)** — Le **planificateur hebdomadaire** est désormais
+> documenté. Il s'active avec une EEPROM 24C32 en remplacement direct de la 24C02.
+> Voir [Planificateur hebdomadaire](#planificateur-hebdomadaire-eeprom-24c32).
+
 Gestionnaire de chauffage électrique à fil pilote pour **2 zones**, basé sur ESP32-C6.  
 Contrôle les radiateurs via fil pilote (5 ordres), lecture du compteur Linky, gestion Tempo EDF, interface Web et MQTT.
 
 > **Variante matérielle :** affichage TM1637 (4 digits 7 segments) — PCB en production.  
-> La variante 4 zones avec afficheur OLED est disponible dans le repo [`esp32-heating-4z`](../esp32-heating-4z).
+> Une variante 4 zones avec afficheur OLED existe et sera publiée ultérieurement dans un dépôt séparé.
 
 ---
 
@@ -62,6 +66,16 @@ Contrôle les radiateurs via fil pilote (5 ordres), lecture du compteur Linky, g
 | ECO | LOW | LOW |
 | CONFORT | HIGH | HIGH |
 | CM2 | cycle 7s/293s | — |
+
+### Schéma et carte
+
+Schéma électronique de la carte principale :
+
+![Schéma carte principale](hardware/main-board/schematic_main_board.png)
+
+Carte principale assemblée :
+
+![Carte principale](hardware/main-board/Heating-Control_main-board.jpeg)
 
 ---
 
@@ -127,7 +141,7 @@ Accéder via `http://<LOCAL_IP>` depuis le réseau local.
 - Réglages du délestage automatique
 - Planificateur hebdomadaire *(visible uniquement avec une EEPROM 24C32)*
 
-![Interface Web du gestionnaire](docs/webui.png)
+<!-- Capture d'écran à ajouter : ![Interface Web du gestionnaire](docs/webui.png) -->
 
 ### Planificateur hebdomadaire (EEPROM 24C32)
 
@@ -217,22 +231,20 @@ Denis Mattera — 2025
 
 ## Hardware
 
-Les fichiers de fabrication sont disponibles dans le dossier `hardware/` :
+Le schéma et une vue de la carte principale sont fournis dans le dossier `hardware/`
+à titre de référence. Les fichiers de fabrication complets (Gerbers, BOM) ne sont pas
+publiés dans ce dépôt.
 
 ```
 hardware/
-├── main-board/
-│   ├── schematic.svg       # Schéma électronique
-│   ├── pcb_top.svg         # Vue du PCB
-│   ├── gerbers.zip         # Fichiers de fabrication JLCPCB
-│   └── BOM.csv             # Liste des composants
-├── display-board/
-│   ├── schematic.svg
-│   ├── pcb_top.svg
-│   ├── gerbers.zip
-│   └── BOM.csv
-└── README.md               # Notes de fabrication (JLCPCB settings)
+├── hardware_README.md                    # Notes de fabrication
+└── main-board/
+    ├── schematic_main_board.png          # Schéma électronique
+    └── Heating-Control_main-board.jpeg   # Vue de la carte
 ```
+
+Le schéma permet de reproduire ou d'adapter la carte. Pour obtenir un PCB prêt à
+l'emploi, voir la section [Commander des cartes](#commander-des-cartes).
 
 ---
 
