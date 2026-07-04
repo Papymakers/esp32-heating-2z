@@ -7,8 +7,10 @@
 Gestionnaire de chauffage électrique à fil pilote pour **2 zones**, basé sur ESP32-C6.  
 Contrôle les radiateurs via fil pilote (5 ordres), lecture du compteur Linky, gestion Tempo EDF, interface Web et MQTT.
 
-> **Variante matérielle :** affichage TM1637 (4 digits 7 segments) — PCB en production.  
-> Une variante 4 zones avec afficheur OLED existe et sera publiée ultérieurement dans un dépôt séparé.
+> **Affichage TM1637** (4 digits 7 segments) — PCB en production.  
+> Un kit PCB compagnon (afficheur TM1637 + bargraphe LEDs de statut + switches, en
+> boîtier DIN 6 modules) est disponible dans le dépôt
+> [`heating-2z-display-board`](https://github.com/Papymakers/heating-2z-display-board).
 
 ---
 
@@ -135,7 +137,7 @@ pio device monitor
 Accéder via `http://<LOCAL_IP>` depuis le réseau local.
 
 - Contrôle manuel de chaque zone
-- Visualisation de la puissance Linky en temps réel
+- Visualisation de la puissance instantanée en temps réel
 - Période Tempo du jour (Bleu/Blanc/Rouge)
 - Compteurs de jours Tempo consommés sur la saison (rouges/blancs)
 - Réglages du délestage automatique
@@ -198,7 +200,8 @@ esp32-heating-2z/
 │   ├── DisplayManager/   # Affichage TM1637
 │   ├── StorageManager/   # EEPROM I2C (24C02/24C32)
 │   ├── Publisher/        # Publication MQTT
-│   └── WebUI/            # Interface Web + serveur HTTP
+│   ├── WebUI/            # Interface Web + serveur HTTP
+│   └── ErriezTM1637/     # Pilote afficheur TM1637 (copie locale, MIT)
 ├── index.html            # WebUI (embarquée dans le firmware)
 ├── partitions.csv        # Table de partitions 8MB Flash
 ├── platformio.ini        # Configuration PlatformIO
@@ -214,8 +217,31 @@ esp32-heating-2z/
 lib_deps =
     knolleary/PubSubClient @ ^2.8
     bblanchon/ArduinoJson @ ^7.0.0
-    erriez/ErriezTM1637
 ```
+
+La bibliothèque **ErriezTM1637** (pilotage de l'afficheur) n'est **pas** déclarée dans
+`lib_deps` : elle est fournie en **copie locale** dans le dossier `lib/ErriezTM1637/`
+(licence MIT, source : <https://github.com/Erriez/ErriezTM1637>). PlatformIO la compile
+directement, sans téléchargement.
+
+> ⚠️ **Problème de chargement possible avec VS Code / PlatformIO**
+>
+> Selon les versions, PlatformIO ne résout plus la bibliothèque depuis le registre
+> sous l'identifiant `erriez/ErriezTM1637` : le chargement des dépendances échoue, ou
+> une autre bibliothèque `TM1637` entre en conflit (erreurs de compilation dans
+> `DisplayManager` : constructeur, `begin()`, `writeData`).
+>
+> **Solution :** la bibliothèque est déjà embarquée dans `lib/ErriezTM1637/` — il n'y a
+> donc rien à installer. Si vous aviez tenté d'ajouter une autre bibliothèque TM1637
+> pendant vos essais, purgez le cache des dépendances puis recompilez :
+>
+> ```bash
+> rm -rf .pio/libdeps        # Windows : rmdir /s /q .pio\libdeps
+> pio run
+> ```
+>
+> PlatformIO ne re-résout alors que `PubSubClient` et `ArduinoJson`, plus la copie
+> locale d'ErriezTM1637 — sans aucun conflit.
 
 ---
 
@@ -255,8 +281,9 @@ Ce projet représente 4 ans de développement, de prototypage et de tests en con
 | Option | Contenu | Prix indicatif |
 |--------|---------|----------------|
 | **PCB nu** | Carte principale | 15€ |
+| **Kit d'affichage** | 3 PCB (façade + TM1637/bargraphe + liaison/switches), boîtier DIN 6 modules — voir [`heating-2z-display-board`](https://github.com/Papymakers/heating-2z-display-board) | 15€ |
 
-*Frais de port en sus. Expédition depuis la France.*
+*Frais de port inclus. Expédition depuis la France.*
 
 📧 Commandes et questions : **support@papymakers.com** - https://papymakers.com/
 
