@@ -19,7 +19,7 @@ Version CSV importable : [BOM.csv](BOM.csv)
 | J3–J7 | Bornier 2P 5,08 mm | Phoenix MPT | 5 | [1729128](https://www.mouser.fr/c/?q=1729128) |
 | LED1 | LED rouge 3 mm | TH Ø3,2 | 1 | [TLDR4900](https://www.mouser.fr/c/?q=TLDR4900) |
 | R1, R2, R7–R10 | 3 kΩ | 1206 | 6 | [SCR1206F3K](https://www.mouser.fr/c/?q=SCR1206F3K) |
-| R3–R6, R11 | 470 Ω | 1206 | 5 | [SCR1206F470R](https://www.mouser.fr/c/?q=SCR1206F470R) |
+| R3–R6, R11 | 220 Ω | 1206 | 5 | [SCR1206F470R](https://www.mouser.fr/c/?q=SCR1206F470R) |
 | R12 | 1,2 kΩ | 1206 | 1 | [SCR1206F1K2](https://www.mouser.fr/c/?q=SCR1206F1K2) |
 | R13 | 10 kΩ | 1206 | 1 | [SCR1206F10K](https://www.mouser.fr/c/?q=SCR1206F10K) |
 | R14 | 1 kΩ 1 W, traversante (montage vertical) | axial | 1 | — |
@@ -27,6 +27,6 @@ Version CSV importable : [BOM.csv](BOM.csv)
 | R16 | 1 MΩ 5 % (face bottom, // C5) | 1206 | 1 | [RMCP1206JT1M00](https://www.mouser.fr/c/?q=RMCP1206JT1M00) |
 | RV1 | Varistance 560 V | 10D | 1 | [MOV‑10D561K](https://www.mouser.fr/c/?q=MOV-10D561K) |
 | SC1 | Supercondensateur 0,47 F 5 V | CMS L3.5×W2.8 | 1 | [PM5R0V474R](https://www.mouser.fr/c/?q=PM5R0V474R) |
-| U1–U4 | Optotriac zero‑crossing | DIP‑6 | 4 | [MOC3041M](https://www.mouser.fr/c/?q=MOC3041M) |
+| U1–U4 | Optotriac zero‑crossing | DIP‑6 | 4 | [MOC3043M](https://www.mouser.fr/c/?q=MOC3043M) |
 | U5 | Module AC/DC 5 V | HLK‑10M05 | 1 | HLK‑10M05 |
 | U7 | Carte de développement ESP32‑C6 | DevKit | 1 | [ESP32‑C6‑DEV‑KIT‑N8](https://www.mouser.fr/c/?q=ESP32-C6-DevKitC-1-N8) |
