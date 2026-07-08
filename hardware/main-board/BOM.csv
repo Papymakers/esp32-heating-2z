@@ -14,7 +14,7 @@ ID,Name,Designator,Footprint,Quantity,Manufacturer Part,Note
 13,1729128,"J3,J4,J5,J6,J7",CONN-TH_2P-P5.08_1729128,5,651-1729128,651- = prefixe Mouser — ref Phoenix Contact : 1729128
 14,LDR4900,LED1,LED-TH_BD3.2-P2.54-RD,1,TLDR4900,
 15,3k,"R1,R2,R7,R8,R9,R10",R1206,6,SCR1206F3K,
-16,470R,"R3,R4,R5,R6,R11",R1206,5,SCR1206F470R,fusion : QR1206F470RP05Z + SCR1206F470R — meme valeur meme boitier
+16,220R,"R3,R4,R5,R6,R11",R1206,5,SCR1206F470R,fusion : QR1206F470RP05Z + SCR1206F470R — meme valeur meme boitier
 17,1.2k,R12,R1206,1,SCR1206F1K2,Polarisation LED HY2 (Rx2)
 18,10k,R13,R1206,1,SCR1206F10K,"Pull-up collecteur HY2 — libelle schema ""10K (1K)"" clarifie en 10k"
 19,1k 1W,R14,R1206,1,,Resistance traversante 1W montage vertical — empreinte 1206 = pastilles adaptees. Serie C5 detection secteur (P calc ~0.56 W mono-alternance)
@@ -22,6 +22,6 @@ ID,Name,Designator,Footprint,Quantity,Manufacturer Part,Note
 21,1M 5%,R16,R1206,1,RMCP1206JT1M00,NOUVEAU rev 4.1 : decharge C5 (tau 0.47 s) — face bottom en // de C5. Stackpole RMCP 0.5 W / 400 V — tenue 325 V crete OK
 22,MOV-10D561K,RV1,MOV10D561K,1,MOV-10D561K,
 23,PM5R0V474R,SC1,CAP-SMD_L3.5-W2.8-R-RD,1,PM5R0V474R,Ref d'origine (TC212B227M006B) = copier-coller de C1 — corrigee
-24,MOC3041M,"U1,U2,U3,U4",DIP-6_L8.5-W6.4-P2.54-LS7.6-BL,4,MOC3041M,
+24,MOC3043M,"U1,U2,U3,U4",DIP-6_L8.5-W6.4-P2.54-LS7.6-BL,4,MOC3043M,
 25,HLK-10M05,U5,PWRM-TH_HLK-10M05,1,HLK-10M05,
 26,ESP32-C6-DEV-KIT-N8,U7,ESP32-C6-DEV-KIT-N8,1,ESP32-C6-DEV-KIT-N8,
