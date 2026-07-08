@@ -3,7 +3,7 @@
 > 🇫🇷 Français | [🇬🇧 English](README.md)
 
 <p align="center">
-  <img src="hardware/images/montage-din.jpg" alt="Exemple de réalisation — module monté en boîtier DIN" width="480">
+  <img src="hardware/images/montage-din.png" alt="Exemple de réalisation — module monté en boîtier DIN" width="480">
 </p>
 
 ## 🛒 PCB disponible en boutique
