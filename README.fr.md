@@ -142,8 +142,8 @@ tableau ou la carte sous tension.
 | Protection sorties | PPTC 230 V / 100 mA (F1) | Fil pilote |
 | Décharge C5 | 1 MΩ (R16, face bottom) | Sécurité au débranchement |
 
-> La nomenclature complète est disponible : **[BOM détaillée](hardware/BOM.md)**
-> · version importable **[BOM.csv](hardware/BOM.csv)**.
+> La nomenclature complète est disponible : **[BOM détaillée](hardware/main-board/BOM.md)**
+> · version importable **[BOM.csv](hardware/main-board/BOM.csv)**.
 
 ### Brochage ESP32-C6
 

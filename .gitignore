@@ -21,3 +21,5 @@ Thumbs.db
 
 # Logs
 *.log
+hardware/**/BOM_0_*.csv
+hardware/**/BOM_0_*.csv
