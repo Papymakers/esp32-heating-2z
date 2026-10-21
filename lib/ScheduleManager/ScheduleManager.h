@@ -17,7 +17,7 @@
 //     supérieure n'est active sur la zone
 //
 // Horloge :
-//   - onClock(hh, mm) déclenché par Publisher depuis MQTT utcClock
+//   - onClock(hh, mm) déclenché chaque minute par ClockManager (NTP, v5.1)
 //   - Vérification toutes les 30s (SCHEDULE_CHECK_MS)
 //   - Application au changement de slot (toutes les 30min)
 //
@@ -51,10 +51,14 @@ public:
              Publisher*      publisher);
 
   // ---------------------------------------------------------------------------
-  // Horloge UTC — appelé par Publisher depuis MQTT utcClock
+  // Horloge locale — tick minute du ClockManager (heure NTP valide)
   // ---------------------------------------------------------------------------
 
   void onClock(uint8_t hh, uint8_t mm);
+
+  // Jour de semaine (0 = lundi … 6 = dimanche), fourni par ClockManager
+  void setDayOfWeek(uint8_t dow);
+  bool isDayOfWeekKnown() const { return _dowKnown; }
 
   // ---------------------------------------------------------------------------
   // Activation globale
@@ -201,12 +205,20 @@ private:
   // Calcule le jour de semaine (0=Lun…6=Dim) depuis day/month
   // Simplifié : stocké à chaque onClock via _currentDow
   uint8_t         _currentDow  = 0;
+  bool            _dowKnown    = false;
+  bool            _dowWarned   = false;
+  bool            _clockKnown  = false;   // au moins un tick NTP reçu
+
+  // Dernière commande voulue par le calendrier, par zone (v5.1.6) :
+  // une commande manuelle (dérogation) tient jusqu'à ce que le calendrier
+  // CHANGE de commande pour la zone.
+  HeatingCmd      _lastSchedCmd[NUM_ZONES] = {};
 
   // Applique le slot courant sur toutes les zones actives
-  void _applySlot(uint8_t dow, uint8_t slot);
+  void _applySlot(uint8_t dow, uint8_t slot, bool force = false);
 
   // Applique le slot sur une zone
-  void _applyZoneSlot(uint8_t zoneId, uint8_t dow, uint8_t slot);
+  void _applyZoneSlot(uint8_t zoneId, uint8_t dow, uint8_t slot, bool force);
 
   // Vérifie si le slot a changé depuis le dernier apply
   bool _slotChanged(uint8_t slot, uint8_t dow) const;

@@ -64,6 +64,9 @@ public:
   HeatingCmd      getCurrentCmd(uint8_t zoneId) const;
   bool            isOverrideActive(uint8_t zoneId) const;
 
+  // Supervision : nombre d'écritures sur les sorties fil pilote
+  uint32_t        getHwWriteCount() const { return _hwWrites; }
+
   // ---------------------------------------------------------------------------
   // Overload management
   // ---------------------------------------------------------------------------
@@ -91,6 +94,7 @@ public:
 private:
 
   ZoneData _zones[NUM_ZONES];
+  uint32_t _hwWrites = 0;
 
   // ---------------------------------------------------------------------------
   // FSM transitions internes
@@ -106,6 +110,9 @@ private:
   // ---------------------------------------------------------------------------
 
   void _updateCm2Timer(uint8_t zi);
+
+  // Démarre une commande sur les sorties (gère le timer CM2)
+  void _startCmd(uint8_t zi, HeatingCmd cmd);
 
   // ---------------------------------------------------------------------------
   // Hardware

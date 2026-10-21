@@ -22,6 +22,9 @@
 //   POST /api/config/zones  → Nb de zones actives
 //   POST /api/eeprom/erase  → Effacement EEPROM (avec confirmation)
 //   GET  /api/debug         → Dump état tous modules
+//   GET  /api/health        → Supervision (tâches, santé, pile, heap)
+//   GET  /api/trace         → Journal des derniers événements de supervision
+//   POST /api/config/log    → Réglage des traces {"serial","mqtt","level","mqttLevel"}
 //
 // WebSocket (port 81) géré par Publisher
 // =============================================================================
@@ -73,6 +76,7 @@ public:
   // ---------------------------------------------------------------------------
 
   uint8_t getActiveZoneCount() const { return _activeZones; }
+  uint32_t getRequestCount()   const { return _requests; }
 
 private:
 
@@ -95,7 +99,8 @@ private:
   DisplayManager*  _displayMgr  = nullptr;
   Publisher*       _publisher   = nullptr;
 
-  uint8_t _activeZones = NUM_ZONES;
+  uint8_t  _activeZones = NUM_ZONES;
+  uint32_t _requests    = 0;
 
   // ---------------------------------------------------------------------------
   // Enregistrement des routes
@@ -118,7 +123,11 @@ private:
   void _handleApiConfigOverload();
   void _handleApiConfigZones();
   void _handleApiEepromErase();
+  void _handleApiReboot();
   void _handleApiDebug();
+  void _handleApiHealth();
+  void _handleApiTrace();
+  void _handleApiConfigLog();
   void _handleNotFound();
 
   // ---------------------------------------------------------------------------

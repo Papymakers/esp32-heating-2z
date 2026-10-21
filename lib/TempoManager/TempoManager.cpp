@@ -2,6 +2,8 @@
 // TempoManager.cpp — Gestion option TEMPO EDF
 // ESP32 Heating Controller v4.0
 // Denis Mattera - 2025
+// topic de mise à jour des jours Tempo : "heating/tempo/setCounters" (payload JSON { "red": 5, "white": 10 })
+// ligne de commande MQTT pour forcer la mise à jour d'un jour rouge : mosquitto_pub -h <broker> -t "heating/tempo/setCounters" -m '{"red":1,"white":0}'
 // =============================================================================
 
 #include "TempoManager.h"
@@ -58,7 +60,7 @@ void TempoManager::onPtecChange(const char* ptec) {
   TempoPeriod newPeriod;
 
   if (!_parsePtec(ptec, newColor, newPeriod)) {
-    LOG(LOG_TEMPO, "Invalid PTEC: '%s'", ptec);
+    LOG_W(LOG_TEMPO, "Invalid PTEC: '%s'", ptec);
     if (_publisher) {
       _publisher->publishLog("WARN", "TEMPO",
         "Invalid PTEC received: %s", ptec);
@@ -68,6 +70,7 @@ void TempoManager::onPtecChange(const char* ptec) {
 
   bool colorChanged  = (newColor  != _state.color);
   bool periodChanged = (newPeriod != _state.period);
+  bool wasForced     = _state.forceHG;
 
   _state.color  = newColor;
   _state.period = newPeriod;
@@ -78,7 +81,7 @@ void TempoManager::onPtecChange(const char* ptec) {
   bool forceHGChanged = (newForceHG != _state.forceHG);
   _state.forceHG = newForceHG;
 
-  LOG(LOG_TEMPO, "PTEC='%s' color=%s period=%s forceHG=%d",
+  LOG_D(LOG_TEMPO, "PTEC='%s' color=%s period=%s forceHG=%d",
       ptec,
       tempoColorToStr(_state.color),
       (_state.period == TempoPeriod::HP) ? "HP" : "HC",
@@ -86,7 +89,7 @@ void TempoManager::onPtecChange(const char* ptec) {
 
   // Applique les règles seulement si Tempo actif ET changement détecté
   if (_config.enabled && (forceHGChanged || colorChanged || periodChanged)) {
-    _applyTempoRules();
+    _applyTempoRules(wasForced);
     _publishState();
   } else if (colorChanged || periodChanged) {
     // Publie quand même l'état pour mettre à jour le WebUI
@@ -125,23 +128,17 @@ void TempoManager::setEnabled(bool enabled) {
   LOG(LOG_TEMPO, "Tempo %s", enabled ? "ENABLED" : "DISABLED");
 
   if (!enabled) {
-    // Désactivation Tempo → restaure les zones depuis leur commande sauvegardée
+    // Désactivation Tempo → libère les zones tenues par Tempo et restaure
+    // leur commande EEPROM. Les zones en délestage ou verrouillées ne sont
+    // pas touchées (leur FSM gère elle-même la restauration).
     _state.forceHG = false;
     LOG(LOG_TEMPO, "Tempo disabled — restoring zones");
-
-    if (_cmdHandler) {
-      // Remet la priorité des zones à DEFAULT pour permettre la recovery
-      for (uint8_t z = 1; z <= NUM_ZONES; z++) {
-        zoneManager.getZoneMutable(z).activePriority = CommandPriority::PRIO_DEFAULT;
-        zoneManager.getZoneMutable(z).state          = ZoneState::NORMAL;
-      }
-      // Restaure depuis EEPROM
-      _cmdHandler->handleRecovery();
-    }
+    _releaseZones();
+    if (_cmdHandler) _cmdHandler->handleRecovery();
   } else {
     // Réactivation : on recalcule et applique les règles immédiatement
     _state.forceHG = _computeForceHG(_state.color, _state.period);
-    _applyTempoRules();
+    _applyTempoRules(false);
   }
 
   _publishState();
@@ -149,16 +146,20 @@ void TempoManager::setEnabled(bool enabled) {
 }
 
 void TempoManager::setForceHG_WhiteHP(bool val) {
+  if (_config.forceHG_WhiteHP == val) return;
+  bool wasForced = _state.forceHG;
   _config.forceHG_WhiteHP = val;
   _state.forceHG = _computeForceHG(_state.color, _state.period);
-  _applyTempoRules();
+  if (_config.enabled) _applyTempoRules(wasForced);
   saveConfig();
 }
 
 void TempoManager::setForceHG_RedHP(bool val) {
+  if (_config.forceHG_RedHP == val) return;
+  bool wasForced = _state.forceHG;
   _config.forceHG_RedHP = val;
   _state.forceHG = _computeForceHG(_state.color, _state.period);
-  _applyTempoRules();
+  if (_config.enabled) _applyTempoRules(wasForced);
   saveConfig();
 }
 
@@ -168,12 +169,13 @@ void TempoManager::setForceHG_RedHP(bool val) {
 
 void TempoManager::onClock(uint8_t hh, uint8_t mm,
                             uint8_t day, uint8_t month) {
-  // Réinitialisation saison au 1er novembre
-  if (day == 1 && month == 11 && _lastMonth != 11) {
+  // Réinitialisation saison au 1er septembre (début de l'année Tempo :
+  // 22 jours rouges et 43 jours blancs du 1/09 au 31/08)
+  if (day == 1 && month == 9 && _lastMonth != 9) {
     _countRed   = 0;
     _countWhite = 0;
     _lastDay    = 0;
-    LOG(LOG_TEMPO, "Saison Tempo reset (1/11)");
+    LOG(LOG_TEMPO, "Saison Tempo reset (1/09)");
     storageManager.saveTempoCounters(0, 0);
   }
   _lastMonth = month;
@@ -213,20 +215,22 @@ void TempoManager::setCounters(uint8_t red, uint8_t white) {
 }
 
 void TempoManager::setForceHG_RedHC(bool val) {
+  if (_config.forceHG_RedHC == val) return;
+  bool wasForced = _state.forceHG;
   _config.forceHG_RedHC = val;
   _state.forceHG = _computeForceHG(_state.color, _state.period);
-  _applyTempoRules();
+  if (_config.enabled) _applyTempoRules(wasForced);
   saveConfig();
 }
 
 void TempoManager::loadConfig() {
   // Sera implémenté avec StorageManager
-  LOG(LOG_TEMPO, "loadConfig() — TODO StorageManager");
+  LOG_D(LOG_TEMPO, "loadConfig() — TODO StorageManager");
 }
 
 void TempoManager::saveConfig() {
   // Sera implémenté avec StorageManager
-  LOG(LOG_TEMPO, "saveConfig() — TODO StorageManager");
+  LOG_D(LOG_TEMPO, "saveConfig() — TODO StorageManager");
 }
 
 // =============================================================================
@@ -307,7 +311,27 @@ bool TempoManager::_computeForceHG(TempoColor  color,
   return false;
 }
 
-void TempoManager::_applyTempoRules() {
+void TempoManager::_releaseZones() {
+  for (uint8_t z = 1; z <= NUM_ZONES; z++) {
+    ZoneData& zd = zoneManager.getZoneMutable(z);
+
+    if (zd.activePriority == CommandPriority::PRIO_TEMPO) {
+      zd.activePriority = CommandPriority::PRIO_DEFAULT;
+    }
+
+    // Zone en délestage : la commande à restaurer en fin de délestage
+    // est peut-être le HG imposé par Tempo → on la remplace par l'EEPROM
+    if (zd.state == ZoneState::OVERRIDE && zd.savedCmd == HeatingCmd::HG) {
+      char saved[10] = {0};
+      if (storageManager.loadZoneCmd(z, saved, sizeof(saved))) {
+        HeatingCmd cmd = CommandHandler::parseCmd(saved);
+        if (cmd != HeatingCmd::UNKNOWN) zd.savedCmd = cmd;
+      }
+    }
+  }
+}
+
+void TempoManager::_applyTempoRules(bool wasForced) {
   if (!_cmdHandler) return;
 
   if (_state.forceHG && _config.enabled) {
@@ -320,7 +344,7 @@ void TempoManager::_applyTempoRules() {
       // Vérifie à la fois la commande courante ET la commande sauvegardée
       HeatingCmd current = zoneManager.getCurrentCmd(z);
       if (current == HeatingCmd::STOP) {
-        LOG(LOG_TEMPO, "Z%d STOP — skipping Tempo HG", z);
+        LOG_D(LOG_TEMPO, "Z%d STOP — skipping Tempo HG", z);
         continue;
       }
 
@@ -329,7 +353,7 @@ void TempoManager::_applyTempoRules() {
       if (storageManager.loadZoneCmd(z, savedCmd, sizeof(savedCmd))) {
         HeatingCmd saved = CommandHandler::parseCmd(savedCmd);
         if (saved == HeatingCmd::STOP) {
-          LOG(LOG_TEMPO, "Z%d EEPROM=STOP — skipping Tempo HG", z);
+          LOG_D(LOG_TEMPO, "Z%d EEPROM=STOP — skipping Tempo HG", z);
           continue;
         }
       }
@@ -348,21 +372,25 @@ void TempoManager::_applyTempoRules() {
     }
 
   } else {
-    // Fin restriction HP → restaure les commandes sauvegardées (HC ou jour bleu)
-    if (_state.forceHG) {
+    LOG_D(LOG_TEMPO, "No restriction (color=%s period=%s forceHG=0)",
+        tempoColorToStr(_state.color),
+        (_state.period == TempoPeriod::HP) ? "HP" : "HC");
+
+    // Fin de restriction (HP → HC, ou jour bleu) : les zones étaient tenues
+    // en HG avec PRIO_TEMPO → on les libère puis on restaure l'EEPROM.
+    // (Avant correctif : _state.forceHG était déjà à false ici, la
+    //  restauration n'avait jamais lieu et les zones restaient en HG.)
+    if (wasForced) {
       LOG(LOG_TEMPO, "Restriction lifted — restoring zones from EEPROM");
-      if (_cmdHandler) _cmdHandler->handleRecovery();
-    }
+      _releaseZones();
+      _cmdHandler->handleRecovery();
 
-    LOG(LOG_TEMPO, "No restriction (color=%s period=%s forceHG=0)",
-        tempoColorToStr(_state.color),
-        (_state.period == TempoPeriod::HP) ? "HP" : "HC");
-
-    if (_publisher) {
-      _publisher->publishLog("INFO", "TEMPO",
-        "Restriction lifted — %s %s",
-        tempoColorToStr(_state.color),
-        (_state.period == TempoPeriod::HP) ? "HP" : "HC");
+      if (_publisher) {
+        _publisher->publishLog("INFO", "TEMPO",
+          "Restriction lifted — %s %s",
+          tempoColorToStr(_state.color),
+          (_state.period == TempoPeriod::HP) ? "HP" : "HC");
+      }
     }
   }
 }
@@ -377,6 +405,7 @@ void TempoManager::_publishState() {
 // =============================================================================
 
 void TempoManager::dump() const {
+  if (!LOG_RAW_ENABLED()) return;   // dump série = niveau DEBUG
   Serial.printf(
     "%s === Tempo State ===\n"
     "%s   enabled    : %d\n"

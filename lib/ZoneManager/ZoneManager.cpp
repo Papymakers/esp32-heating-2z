@@ -14,13 +14,13 @@ ZoneManager zoneManager;
 // =============================================================================
 
 void ZoneManager::begin() {
-  LOG(LOG_ZONE, "Initializing %d zones...", NUM_ZONES);
+  LOG_D(LOG_ZONE, "Initializing %d zones...", NUM_ZONES);
 
   for (uint8_t i = 0; i < NUM_ZONES; i++) {
     initZone(i + 1);  // zones 1-based
   }
 
-  LOG(LOG_ZONE, "All zones initialized.");
+  LOG_D(LOG_ZONE, "All zones initialized.");
 }
 
 void ZoneManager::initZone(uint8_t zoneId) {
@@ -31,7 +31,7 @@ void ZoneManager::initZone(uint8_t zoneId) {
   pinMode(PIN_MOC_POS[zi], OUTPUT);
   pinMode(PIN_MOC_NEG[zi], OUTPUT);
 
-  // MOC actif bas : HIGH = MOC bloqué (état sûr au démarrage = ECO)
+  // État au démarrage = ECO (LOW/LOW : alternance complète transmise)
   digitalWrite(PIN_MOC_POS[zi], LOW);
   digitalWrite(PIN_MOC_NEG[zi], LOW);
 
@@ -50,7 +50,7 @@ void ZoneManager::initZone(uint8_t zoneId) {
   _zones[zi].overloadStart  = 0;
   _zones[zi].restoreTimer   = 0;
 
-  LOG(LOG_ZONE, "Zone %d initialized (ECO default).", zoneId);
+  LOG_D(LOG_ZONE, "Zone %d initialized (ECO default).", zoneId);
 }
 
 // =============================================================================
@@ -59,7 +59,7 @@ void ZoneManager::initZone(uint8_t zoneId) {
 
 bool ZoneManager::applyCommand(const CommandContext& ctx) {
   if (ctx.zone < 1 || ctx.zone > NUM_ZONES) {
-    LOG(LOG_ZONE, "Invalid zone %d", ctx.zone);
+    LOG_W(LOG_ZONE, "Invalid zone %d", ctx.zone);
     return false;
   }
 
@@ -69,14 +69,14 @@ bool ZoneManager::applyCommand(const CommandContext& ctx) {
   // Zone verrouillée → refus sauf FAULT
   if (z.state == ZoneState::LOCKED &&
       ctx.priority != CommandPriority::PRIO_FAULT) {
-    LOG(LOG_ZONE, "Zone %d LOCKED — command %s refused.",
+    LOG_W(LOG_ZONE, "Zone %d LOCKED — command %s refused.",
         ctx.zone, heatingCmdToStr(ctx.cmd));
     return false;
   }
 
   // Vérification priorité
   if (!_canOverride(zi, ctx.priority)) {
-    LOG(LOG_ZONE, "Zone %d priority too low (%d <= %d) — %s refused.",
+    LOG_W(LOG_ZONE, "Zone %d priority too low (%d <= %d) — %s refused.",
         ctx.zone,
         (uint8_t)ctx.priority,
         (uint8_t)z.activePriority,
@@ -84,7 +84,7 @@ bool ZoneManager::applyCommand(const CommandContext& ctx) {
     return false;
   }
 
-  LOG(LOG_ZONE, "Zone %d [%s] %s → %s (prio=%d src=%s)",
+  LOG_D(LOG_ZONE, "Zone %d [%s] %s → %s (prio=%d src=%s)",
       ctx.zone,
       zoneStateToStr(z.state),
       heatingCmdToStr(z.currentCmd),
@@ -110,20 +110,25 @@ bool ZoneManager::applyCommand(const CommandContext& ctx) {
   z.currentCmd     = ctx.cmd;
   z.activePriority = ctx.priority;
 
-  // Gestion timer CM2
-  if (ctx.cmd == HeatingCmd::CM2) {
+  _startCmd(zi, ctx.cmd);
+  return true;
+}
+
+// Démarre une commande sur les sorties, y compris le séquencement CM2.
+// Utilisé par applyCommand() et par la restauration après délestage.
+void ZoneManager::_startCmd(uint8_t zi, HeatingCmd cmd) {
+  ZoneData& z = _zones[zi];
+  if (cmd == HeatingCmd::CM2) {
     z.timerActive = true;
     z.cm2Mode     = Cm2Mode::MODE_7S;
     z.timerStart  = millis();
-    // CM2 démarre en phase 7s (CONF)
-    applyHardware(zi, HeatingCmd::CONF);
-    LOG(LOG_ZONE, "Zone %d CM2 timer started (7s phase).", ctx.zone);
+    // Confort -2 °C : 7 s d'alternance complète (motif ECO) en début de cycle
+    applyHardware(zi, HeatingCmd::ECO);
+    LOG_D(LOG_ZONE, "Zone %d CM2 timer started (7s phase).", z.id);
   } else {
     z.timerActive = false;
-    applyHardware(zi, ctx.cmd);
+    applyHardware(zi, cmd);
   }
-
-  return true;
 }
 
 void ZoneManager::applyHardware(uint8_t zoneIndex, HeatingCmd cmd) {
@@ -135,6 +140,7 @@ void ZoneManager::applyHardware(uint8_t zoneIndex, HeatingCmd cmd) {
 
   _zones[zoneIndex].posState = pos;
   _zones[zoneIndex].negState = neg;
+  _hwWrites++;
 }
 
 void ZoneManager::applyAll(HeatingCmd cmd,
@@ -207,13 +213,12 @@ void ZoneManager::_handleRestore(uint8_t zi) {
     LOG(LOG_ZONE, "Zone %d RESTORE → NORMAL (cmd: %s)",
         z.id, heatingCmdToStr(z.savedCmd));
 
-    // Restauration commande sauvegardée
+    // Restauration commande sauvegardée (relance le timer si CM2)
     z.currentCmd     = z.savedCmd;
     z.activePriority = CommandPriority::PRIO_DEFAULT;
     z.state          = ZoneState::NORMAL;
-    z.timerActive    = false;
 
-    applyHardware(zi, z.savedCmd);
+    _startCmd(zi, z.savedCmd);
   }
 }
 
@@ -228,8 +233,9 @@ void ZoneManager::_handleLocked(uint8_t zi) {
 }
 
 // =============================================================================
-// TIMER CM2 (Confort -2°C)
-// Alternance : 7s en CONF puis 293s en ECO, en boucle
+// TIMER CM2 (Confort -2°C) — norme fil pilote 6 ordres
+// Cycle de 300 s : 7 s d'alternance complète (motif ECO) puis 293 s sans
+// signal (motif CONF), en boucle.
 // =============================================================================
 
 void ZoneManager::_updateCm2Timer(uint8_t zi) {
@@ -238,19 +244,19 @@ void ZoneManager::_updateCm2Timer(uint8_t zi) {
 
   if (z.cm2Mode == Cm2Mode::MODE_7S &&
       elapsed >= CM2_INTERVAL_7S) {
-    // Fin phase 7s → passe en 293s (ECO)
+    // Fin phase 7s → 293 s sans signal (motif CONF)
     z.cm2Mode    = Cm2Mode::MODE_293S;
     z.timerStart = millis();
-    applyHardware(zi, HeatingCmd::ECO);
-    LOG(LOG_ZONE, "Zone %d CM2 → 293s (ECO phase)", z.id);
+    applyHardware(zi, HeatingCmd::CONF);
+    LOG_D(LOG_ZONE, "Zone %d CM2 → 293s (no signal)", z.id);
   }
   else if (z.cm2Mode == Cm2Mode::MODE_293S &&
            elapsed >= CM2_INTERVAL_293S) {
-    // Fin phase 293s → repasse en 7s (CONF)
+    // Fin phase 293s → 7 s d'alternance complète (motif ECO)
     z.cm2Mode    = Cm2Mode::MODE_7S;
     z.timerStart = millis();
-    applyHardware(zi, HeatingCmd::CONF);
-    LOG(LOG_ZONE, "Zone %d CM2 → 7s (CONF phase)", z.id);
+    applyHardware(zi, HeatingCmd::ECO);
+    LOG_D(LOG_ZONE, "Zone %d CM2 → 7s (full wave)", z.id);
   }
 }
 
@@ -269,14 +275,6 @@ void ZoneManager::startOverride(uint8_t zoneId, HeatingCmd fallbackCmd) {
   z.state        = ZoneState::OVERRIDE;
   z.overloadStart = millis();
   z.timerActive  = false;
-
-  CommandContext ctx{};
-  ctx.zone     = zoneId;
-  ctx.cmd      = fallbackCmd;
-  ctx.inputCmd = fallbackCmd;
-  ctx.origin   = CommandOrigin::SYSTEM;
-  ctx.source   = CommandSource::SRC_OVERLOAD;
-  ctx.priority = CommandPriority::PRIO_OVERLOAD;
 
   applyHardware(zi, fallbackCmd);
   z.currentCmd     = fallbackCmd;
@@ -353,12 +351,12 @@ bool ZoneManager::isOverrideActive(uint8_t zoneId) const {
 // =============================================================================
 
 void ZoneManager::_cmdToMoc(HeatingCmd cmd, bool& pos, bool& neg) const {
-  // MOC3041 actif bas : true = sortie HIGH (MOC bloqué), false = LOW (MOC passant)
+  // MOC304x actif bas : true = sortie HIGH (MOC bloqué), false = LOW (MOC passant)
   // Fil pilote 230V :
-  //   STOP  → demi-onde négative  : pos=LOW(passant),  neg=HIGH(bloqué)  → L/H
-  //   HG    → demi-onde positive  : pos=HIGH(bloqué),  neg=LOW(passant)  → H/L
-  //   ECO   → pas de signal       : pos=LOW(passant),  neg=LOW(passant)  → L/L
-  //   CONF  → signal complet      : pos=HIGH(bloqué),  neg=HIGH(bloqué) → H/H
+  //   STOP  → demi-alternance positive : pos=LOW(passant), neg=HIGH(bloqué) → L/H
+  //   HG    → demi-alternance négative : pos=HIGH(bloqué), neg=LOW(passant) → H/L
+  //   ECO   → alternance complète      : pos=LOW(passant), neg=LOW(passant) → L/L
+  //   CONF  → pas de signal            : pos=HIGH(bloqué), neg=HIGH(bloqué) → H/H
   switch (cmd) {
     case HeatingCmd::STOP: pos = false; neg = true;  break;
     case HeatingCmd::HG:   pos = true;  neg = false; break;
@@ -388,6 +386,7 @@ bool ZoneManager::_canOverride(uint8_t zi,
 // =============================================================================
 
 void ZoneManager::dumpZone(uint8_t zoneId) const {
+  if (!LOG_RAW_ENABLED()) return;   // dump série = niveau DEBUG
   if (zoneId < 1 || zoneId > NUM_ZONES) return;
   const ZoneData& z = _zones[zoneId - 1];
 
@@ -406,6 +405,7 @@ void ZoneManager::dumpZone(uint8_t zoneId) const {
 }
 
 void ZoneManager::dumpAll() const {
+  if (!LOG_RAW_ENABLED()) return;   // dump série = niveau DEBUG
   Serial.printf("%s === Zone Status ===\n", LOG_ZONE);
   for (uint8_t i = 1; i <= NUM_ZONES; i++) {
     dumpZone(i);

@@ -88,7 +88,7 @@ public:
   uint8_t getCountWhite() const { return _countWhite; }
 
   // ---------------------------------------------------------------------------
-  // Horloge — appelé depuis Publisher::_handleUtcClock
+  // Horloge locale — tick minute du ClockManager (heure NTP valide)
   // ---------------------------------------------------------------------------
 
   void onClock(uint8_t hh, uint8_t mm, uint8_t day, uint8_t month);
@@ -121,7 +121,7 @@ private:
   TempoConfig _config       {};
   TempoColor  _tomorrowColor = TempoColor::UNKNOWN;
 
-  // Compteurs jours Tempo saison (reset le 1/11)
+  // Compteurs jours Tempo saison (saison Tempo : 1er septembre → 31 août)
   uint8_t       _countRed   = 0;
   uint8_t       _countWhite = 0;
   uint8_t       _lastDay    = 0;   // dernier jour comptabilisé (évite double compte)
@@ -154,8 +154,13 @@ private:
   // Recalcule forceHG selon couleur + période + config
   bool _computeForceHG(TempoColor color, TempoPeriod period) const;
 
-  // Applique les commandes de chauffage sur toutes les zones
-  void _applyTempoRules();
+  // Applique les commandes de chauffage sur toutes les zones.
+  // wasForced = état forceHG AVANT le changement : s'il était vrai et ne
+  // l'est plus, les zones forcées en HG sont libérées puis restaurées.
+  void _applyTempoRules(bool wasForced);
+
+  // Rend la main sur les zones que Tempo tenait (priorité PRIO_TEMPO)
+  void _releaseZones();
 
   // Publie l'état Tempo via MQTT + WebSocket
   void _publishState();

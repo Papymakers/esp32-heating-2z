@@ -65,6 +65,28 @@ void OverloadManager::onIinstUpdate(uint8_t iinst,
   }
 }
 
+void OverloadManager::onDataLost() {
+  if (!_overloadFlag) return;
+  _overloadFlag = false;
+  LOG_W(LOG_OVLD, "Linky data lost — overload flag cleared (state=%s)",
+      stateToStr(_state));
+  if (_publisher) {
+    _publisher->publishLog("WARN", "OVLD",
+      "Linky data lost — overload flag cleared (state=%s)", stateToStr(_state));
+  }
+}
+
+uint8_t OverloadManager::_heatLevel(HeatingCmd cmd) {
+  switch (cmd) {
+    case HeatingCmd::STOP: return 0;
+    case HeatingCmd::HG:   return 1;
+    case HeatingCmd::ECO:  return 2;
+    case HeatingCmd::CM2:  return 3;
+    case HeatingCmd::CONF: return 4;
+    default:               return 2;
+  }
+}
+
 // =============================================================================
 // LOOP FSM
 // =============================================================================
@@ -91,7 +113,7 @@ void OverloadManager::_handleIdle() {
   _state       = OverloadState::DETECTING;
   _detectStart = millis();
 
-  LOG(LOG_OVLD, "DETECTING — Iinst=%u >= Isousc=%u",
+  LOG_W(LOG_OVLD, "DETECTING — Iinst=%u >= Isousc=%u",
       _currentIinst, _currentIsousc);
 
   _publishEvent("detecting");
@@ -108,7 +130,7 @@ void OverloadManager::_handleDetecting() {
 
   // Seuil temporel atteint → délestage confirmé
   if (millis() - _detectStart >= _config.thresholdMs) {
-    LOG(LOG_OVLD, "Threshold reached (%lums) — starting delestage",
+    LOG_W(LOG_OVLD, "Threshold reached (%lums) — starting delestage",
         _config.thresholdMs);
     _startDelestage();
   }
@@ -117,7 +139,7 @@ void OverloadManager::_handleDetecting() {
 void OverloadManager::_handleOverloaded() {
   // Timeout max atteint → restauration forcée (même si toujours en surcharge)
   if (millis() - _overloadStart >= _config.maxOverloadMs) {
-    LOG(LOG_OVLD, "Max overload duration reached (%lums) — forced restore",
+    LOG_W(LOG_OVLD, "Max overload duration reached (%lums) — forced restore",
         _config.maxOverloadMs);
 
     if (_publisher) {
@@ -170,8 +192,8 @@ void OverloadManager::_handleRestoring() {
 
     if (_publisher) {
       _publisher->publishLog("INFO", "OVLD",
-        "Overload ended — duration=%lums events=%u peak=%uA",
-        duration, _stats.eventCount, _stats.peakIinst);
+        "Overload ended — duration=%lums events=%lu peak=%uA",
+        duration, (unsigned long)_stats.eventCount, _stats.peakIinst);
     }
 
     _state = OverloadState::IDLE;
@@ -191,22 +213,27 @@ void OverloadManager::_startDelestage() {
   _stats.eventCount++;
   _stats.lastEventTimestamp = _overloadStart;
 
-  LOG(LOG_OVLD, "OVERLOADED — applying %s to all zones (event #%u)",
-      heatingCmdToStr(_config.fallbackCmd), _stats.eventCount);
+  LOG_W(LOG_OVLD, "OVERLOADED — applying %s to all zones (event #%lu)",
+      heatingCmdToStr(_config.fallbackCmd), (unsigned long)_stats.eventCount);
 
   // Délestage via ZoneManager (startOverride sur chaque zone)
   if (_zoneMgr) {
     for (uint8_t z = 1; z <= NUM_ZONES; z++) {
+      // On ne déleste que les zones qui chauffent plus que le fallback :
+      // une zone en STOP ou en HG ne doit pas passer en ECO (ce serait
+      // augmenter la consommation pendant une surcharge).
+      HeatingCmd cur = _zoneMgr->getCurrentCmd(z);
+      if (_heatLevel(cur) <= _heatLevel(_config.fallbackCmd)) continue;
       _zoneMgr->startOverride(z, _config.fallbackCmd);
     }
   }
 
   if (_publisher) {
     _publisher->publishLog("WARN", "OVLD",
-      "Delestage started — Iinst=%u Isousc=%u cmd=%s event=#%u",
+      "Delestage started — Iinst=%u Isousc=%u cmd=%s event=#%lu",
       _currentIinst, _currentIsousc,
       heatingCmdToStr(_config.fallbackCmd),
-      _stats.eventCount);
+      (unsigned long)_stats.eventCount);
   }
 
   _publishEvent("overloaded");
@@ -236,10 +263,10 @@ void OverloadManager::_publishEvent(const char* event) {
 
   // Pour l'instant : log enrichi suffisant
   _publisher->publishLog("INFO", "OVLD",
-    "state=%s event=%s Iinst=%u Isousc=%u events=%u",
+    "state=%s event=%s Iinst=%u Isousc=%u events=%lu",
     stateToStr(_state), event,
     _currentIinst, _currentIsousc,
-    _stats.eventCount);
+    (unsigned long)_stats.eventCount);
 }
 
 // =============================================================================
@@ -252,7 +279,7 @@ void OverloadManager::setEnabled(bool enabled) {
 
   if (!enabled && _state != OverloadState::IDLE) {
     // Désactivation en cours de surcharge → restauration immédiate
-    LOG(LOG_OVLD, "Disabled during overload — forcing restore");
+    LOG_W(LOG_OVLD, "Disabled during overload — forcing restore");
     forceRestore();
   }
 }
@@ -279,7 +306,7 @@ void OverloadManager::setFallbackCmd(HeatingCmd cmd) {
 void OverloadManager::forceRestore() {
   if (_state == OverloadState::IDLE) return;
 
-  LOG(LOG_OVLD, "Force restore from state=%s", stateToStr(_state));
+  LOG_W(LOG_OVLD, "Force restore from state=%s", stateToStr(_state));
 
   if (_publisher) {
     _publisher->publishLog("WARN", "OVLD",
@@ -314,6 +341,7 @@ const char* OverloadManager::stateToStr(OverloadState s) {
 }
 
 void OverloadManager::dump() const {
+  if (!LOG_RAW_ENABLED()) return;   // dump série = niveau DEBUG
   Serial.printf(
     "%s === OverloadManager ===\n"
     "%s   state        : %s\n"
@@ -325,7 +353,7 @@ void OverloadManager::dump() const {
     "%s   restoreDelay : %lu ms\n"
     "%s   maxOverload  : %lu ms\n"
     "%s   fallbackCmd  : %s\n"
-    "%s   events       : %u\n"
+    "%s   events       : %lu\n"
     "%s   peakIinst    : %u A\n"
     "%s   totalMs      : %lu ms\n"
     "%s =======================\n",
@@ -339,9 +367,9 @@ void OverloadManager::dump() const {
     LOG_OVLD, _config.restoreDelayMs,
     LOG_OVLD, _config.maxOverloadMs,
     LOG_OVLD, heatingCmdToStr(_config.fallbackCmd),
-    LOG_OVLD, _stats.eventCount,
+    LOG_OVLD, (unsigned long)_stats.eventCount,
     LOG_OVLD, _stats.peakIinst,
-    LOG_OVLD, _stats.totalOverloadMs,
+    LOG_OVLD, (unsigned long)_stats.totalOverloadMs,
     LOG_OVLD
   );
 }

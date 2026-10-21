@@ -87,6 +87,11 @@ public:
 
   void onIinstUpdate(uint8_t iinst, uint8_t isousc, bool overload);
 
+  // Appelé par la supervision quand la TIC ne fournit plus de données :
+  // sans mesure, on ne peut pas maintenir une surcharge → flag effacé,
+  // la FSM passe en RESTORING au lieu de boucler délestage/restauration.
+  void onDataLost();
+
   // ---------------------------------------------------------------------------
   // Loop FSM — à appeler dans loop()
   // ---------------------------------------------------------------------------
@@ -147,6 +152,9 @@ private:
   void _startDelestage();
   void _endDelestage();
   void _publishEvent(const char* event);
+
+  // Niveau de chauffe d'une commande (STOP < HG < ECO < CM2 < CONF)
+  static uint8_t _heatLevel(HeatingCmd cmd);
 
   // ---------------------------------------------------------------------------
   // Membres privés

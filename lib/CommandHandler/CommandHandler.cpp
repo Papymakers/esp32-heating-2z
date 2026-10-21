@@ -47,14 +47,14 @@ bool CommandHandler::handle(uint8_t       zone,
                              CommandOrigin origin,
                              CommandSource source) {
   if (!cmdStr) {
-    LOG(LOG_CMD, "Null command string for zone %d", zone);
+    LOG_W(LOG_CMD, "Null command string for zone %d", zone);
     return false;
   }
 
   HeatingCmd cmd = parseCmd(cmdStr);
 
   if (cmd == HeatingCmd::UNKNOWN) {
-    LOG(LOG_CMD, "Unknown command '%s' for zone %d", cmdStr, zone);
+    LOG_W(LOG_CMD, "Unknown command '%s' for zone %d", cmdStr, zone);
     return false;
   }
 
@@ -66,12 +66,12 @@ bool CommandHandler::handleCmd(uint8_t       zone,
                                 CommandOrigin origin,
                                 CommandSource source) {
   if (zone < 1 || zone > NUM_ZONES) {
-    LOG(LOG_CMD, "Invalid zone %d", zone);
+    LOG_W(LOG_CMD, "Invalid zone %d", zone);
     return false;
   }
 
   if (!isValidCmd(cmd)) {
-    LOG(LOG_CMD, "Invalid command %s for zone %d",
+    LOG_W(LOG_CMD, "Invalid command %s for zone %d",
         heatingCmdToStr(cmd), zone);
     return false;
   }
@@ -79,7 +79,7 @@ bool CommandHandler::handleCmd(uint8_t       zone,
   // 1. Résolution du contexte
   CommandContext ctx = _resolve(zone, cmd, origin, source);
 
-  LOG(LOG_CMD, "Z%d IN  cmd=%-5s orig=%s src=%s prio=%d",
+  LOG_D(LOG_CMD, "Z%d IN  cmd=%-5s orig=%s src=%s prio=%d",
       zone,
       heatingCmdToStr(ctx.inputCmd),
       originToStr(ctx.origin),
@@ -96,7 +96,7 @@ bool CommandHandler::handleCmd(uint8_t       zone,
         heatingCmdToStr(ctx.cmd));
   }
 
-  LOG(LOG_CMD, "Z%d OUT cmd=%-5s persist=%d temp=%d stop=%d",
+  LOG_D(LOG_CMD, "Z%d OUT cmd=%-5s persist=%d temp=%d stop=%d",
       zone,
       heatingCmdToStr(ctx.cmd),
       ctx.isPersistent,
@@ -105,8 +105,9 @@ bool CommandHandler::handleCmd(uint8_t       zone,
 
   // 3. Exécution
   bool executed = _execute(ctx);
+  if (executed) _accepted++; else _rejected++;
   if (!executed) {
-    LOG(LOG_CMD, "Z%d command %s REJECTED (priority)",
+    LOG_W(LOG_CMD, "Z%d command %s REJECTED (priority)",
         zone, heatingCmdToStr(ctx.cmd));
     return false;
   }
@@ -149,19 +150,19 @@ void CommandHandler::handleBootDefault() {
 
 void CommandHandler::handleRecovery() {
   if (!_storageMgr) {
-    LOG(LOG_CMD, "Recovery skipped — no StorageManager");
+    LOG_W(LOG_CMD, "Recovery skipped — no StorageManager");
     handleBootDefault();
     return;
   }
 
-  LOG(LOG_CMD, "Recovery — loading zones from EEPROM...");
+  LOG_D(LOG_CMD, "Recovery — loading zones from EEPROM...");
 
   for (uint8_t z = 1; z <= NUM_ZONES; z++) {
     char cmdStr[10] = {0};
     bool ok = _storageMgr->loadZoneCmd(z, cmdStr, sizeof(cmdStr));
 
     if (!ok || cmdStr[0] == '\0') {
-      LOG(LOG_CMD, "Z%d no EEPROM data → ECO default", z);
+      LOG_D(LOG_CMD, "Z%d no EEPROM data → ECO default", z);
       handleCmd(z,
                 HeatingCmd::ECO,
                 CommandOrigin::SYSTEM,
@@ -171,7 +172,7 @@ void CommandHandler::handleRecovery() {
 
     HeatingCmd cmd = parseCmd(cmdStr);
     if (cmd == HeatingCmd::UNKNOWN) {
-      LOG(LOG_CMD, "Z%d EEPROM invalid '%s' → ECO", z, cmdStr);
+      LOG_W(LOG_CMD, "Z%d EEPROM invalid '%s' → ECO", z, cmdStr);
       handleCmd(z,
                 HeatingCmd::ECO,
                 CommandOrigin::SYSTEM,
@@ -179,7 +180,7 @@ void CommandHandler::handleRecovery() {
       continue;
     }
 
-    LOG(LOG_CMD, "Z%d EEPROM → %s", z, cmdStr);
+    LOG_D(LOG_CMD, "Z%d EEPROM → %s", z, cmdStr);
     handleCmd(z,
               cmd,
               CommandOrigin::SYSTEM,
@@ -309,7 +310,7 @@ bool CommandHandler::_execute(CommandContext& ctx) {
 bool CommandHandler::_store(const CommandContext& ctx) {
   if (!_storageMgr) return false;
   if (!_shouldStore(ctx)) {
-    LOG(LOG_CMD, "Z%d EEPROM skip (temp=%d persist=%d orig=%s)",
+    LOG_D(LOG_CMD, "Z%d EEPROM skip (temp=%d persist=%d orig=%s)",
         ctx.zone,
         ctx.isTemporary,
         ctx.isPersistent,
@@ -325,7 +326,7 @@ bool CommandHandler::_store(const CommandContext& ctx) {
     LOG(LOG_CMD, "Z%d EEPROM saved: %s",
         ctx.zone, heatingCmdToStr(ctx.inputCmd));
   } else {
-    LOG(LOG_CMD, "Z%d EEPROM write FAILED", ctx.zone);
+    LOG_E(LOG_CMD, "Z%d EEPROM write FAILED", ctx.zone);
   }
   return ok;
 }
@@ -402,6 +403,7 @@ bool CommandHandler::_isTemporary(const CommandContext& ctx) const {
 // =============================================================================
 
 void CommandHandler::dumpContext(const CommandContext& ctx) const {
+  if (!LOG_RAW_ENABLED()) return;   // dump série = niveau DEBUG
   Serial.printf(
     "%s --- CommandContext ---\n"
     "%s   zone       : %d\n"

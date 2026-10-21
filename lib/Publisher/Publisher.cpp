@@ -1,6 +1,6 @@
 // =============================================================================
 // Publisher.cpp — Publication MQTT + SSE + Logs
-// ESP32 Heating Controller v4.0
+// ESP32 Heating Controller v5.1
 // Denis Mattera - 2025
 // =============================================================================
 
@@ -10,6 +10,7 @@
 #include <WiFiServer.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
+#include <esp_mac.h>
 
 #include "Publisher.h"
 #include "ZoneManager.h"
@@ -17,6 +18,7 @@
 #include "TempoManager.h"
 #include "LinkyReader.h"
 #include "ScheduleManager.h"
+#include "StorageManager.h"
 
 // =============================================================================
 // PIMPL — objets réseau cachés du header
@@ -39,21 +41,37 @@ Publisher* Publisher::_instance = nullptr;
 
 void Publisher::begin(ZoneManager*    zoneMgr,
                       CommandHandler* cmdHandler,
-                      TempoManager*   tempoMgr) {
+                      TempoManager*   tempoMgr,
+                      LinkyReader*    linky){
   _zoneMgr    = zoneMgr;
   _cmdHandler = cmdHandler;
   _tempoMgr   = tempoMgr;
+  _linky      = linky;
   _instance   = this;
 
   _impl = new Impl();
+  // Timeouts courts : broker sur le LAN. Avec les valeurs par défaut
+  // (3 s de connexion TCP + 15 s d'attente CONNACK), une reconnexion
+  // pouvait bloquer loop() bien au-delà du Task Watchdog (5 s).
+  _impl->wifiClient.setConnectionTimeout(MQTT_CONNECT_TIMEOUT_MS);
+  _impl->mqttClient.setSocketTimeout(MQTT_SOCKET_TIMEOUT_S);
   _impl->mqttClient.setServer(MQTT_BROKER, MQTT_PORT);
   _impl->mqttClient.setCallback(mqttCallbackStatic);
   _impl->mqttClient.setBufferSize(2048);
   // sseServer.begin() appelé dans update() après connexion WiFi
 
   getVersion(_fwVersion, sizeof(_fwVersion));
-  LOG(LOG_MQTT, "Publisher ready MQTT=%s:%d SSE=:%d",
-      MQTT_BROKER, MQTT_PORT, SSE_PORT);
+
+  // Identifiant client unique par module : préfixe + fin de la MAC WiFi.
+  // (v5.0 : identifiant fixe — deux modules sur le même broker se
+  // déconnectaient mutuellement en boucle.)
+  uint8_t mac[6] = {0};
+  esp_read_mac(mac, ESP_MAC_WIFI_STA);
+  snprintf(_clientId, sizeof(_clientId), "%s-%02x%02x%02x",
+           MQTT_CLIENT_PREFIX, mac[3], mac[4], mac[5]);
+
+  LOG(LOG_MQTT, "Publisher ready MQTT=%s:%d id=%s SSE=:%d",
+      MQTT_BROKER, MQTT_PORT, _clientId, SSE_PORT);
 }
 
 // =============================================================================
@@ -80,22 +98,36 @@ bool Publisher::isMqttConnected() {
 
 void Publisher::reconnectMQTT() {
   if (!_impl) return;
-  if (millis() - _lastMqttAttempt < MQTT_RECONNECT_MS) return;
+  if (millis() - _lastMqttAttempt < _mqttRetryMs) return;
   _lastMqttAttempt = millis();
   if (!WiFi.isConnected()) return;
 
-  if (_impl->mqttClient.connect(MQTT_CLIENT_ID)) {
-    LOG(LOG_MQTT, "MQTT connected");
+  if (_impl->mqttClient.connect(_clientId)) {
+    LOG(LOG_MQTT, "MQTT connected (id=%s)", _clientId);
+    _mqttFailCount = 0;
+    _mqttRetryMs   = MQTT_RECONNECT_MS;
+    _mqttConnectCount++;
     _impl->mqttClient.subscribe("heatingCtrl_v4/zone/+/set");
     _impl->mqttClient.subscribe("heatingCmd");
     _impl->mqttClient.subscribe("heatingCtrl_v4/tempo/setCounters"); // MAJ manuelle compteurs
-    _impl->mqttClient.subscribe("utcClock");
-    _impl->mqttClient.subscribe("utcClock/#");
     _impl->mqttClient.subscribe("ecowittDatas");
     _impl->mqttClient.subscribe("overrideValues");
+    _impl->mqttClient.subscribe(MQTT_TOPIC_ACK);  // ACK index journalier
+    _impl->mqttClient.subscribe(MQTT_TOPIC_REQUEST);
+    {
+      char t[64];
+      snprintf(t, sizeof(t), "%s/log/set", MQTT_TOPIC_BASE);
+      _impl->mqttClient.subscribe(t);
+    }
     publishLog("INFO","MQTT","Connected fw=%s", _fwVersion);
   } else {
-    LOG(LOG_MQTT, "MQTT failed rc=%d", _impl->mqttClient.state());
+    // Backoff exponentiel : 5 s → 10 s → 20 s → 40 s → 60 s max.
+    // Broker absent = chaque tentative coûte jusqu'à MQTT_CONNECT_TIMEOUT_MS
+    // de blocage de loop() : inutile de la répéter toutes les 5 s.
+    if (_mqttFailCount < 255) _mqttFailCount++;
+    _mqttRetryMs = min(_mqttRetryMs * 2, MQTT_RECONNECT_MAX_MS);
+    LOG_W(LOG_MQTT, "MQTT failed rc=%d (fail #%u, next try in %lus)",
+        _impl->mqttClient.state(), _mqttFailCount, _mqttRetryMs / 1000);
   }
 }
 
@@ -112,7 +144,7 @@ void Publisher::_sseAcceptClients() {
       _impl->sseClients[i] = c;
       _sseClientActive[i]  = true;
       _sseHandshake(&_impl->sseClients[i]);
-      LOG(LOG_WEB, "SSE client %d connected", i);
+      LOG_D(LOG_WEB, "SSE client %d connected", i);
       publishFullState();
       return;
     }
@@ -315,13 +347,25 @@ void Publisher::publishLinkyIndexes(long hcjb, long hpjb,
 
 void Publisher::publishLog(const char* level, const char* module,
                             const char* fmt, ...) {
+  LogLevel lvl = logLevelFromStr(level);
+  bool toSerial = logSerialOn(lvl);
+  bool toMqtt   = logMqttOn(lvl) && isMqttConnected();
+  if (!toSerial && !toMqtt) return;          // rien à faire : pas de formatage
+
   char msg[192];
   va_list args;
   va_start(args, fmt);
   vsnprintf(msg, sizeof(msg), fmt, args);
   va_end(args);
 
-  LOG(LOG_MQTT, "[%s][%s] %s", level, module, msg);
+  if (toSerial) LOG_AT(lvl, LOG_MQTT, "[%s][%s] %s", level, module, msg);
+  if (!toMqtt) return;
+
+  // Le message est inséré tel quel dans du JSON : remplace guillemets
+  // et antislashs par une apostrophe
+  for (char* p = msg; *p; p++) {
+    if (*p == '"' || *p == 0x5C) *p = 0x27;
+  }
 
   char buf[384];
   snprintf(buf, sizeof(buf),
@@ -335,6 +379,9 @@ void Publisher::publishLog(const char* level, const char* module,
 }
 
 void Publisher::publishCommandLog(const CommandContext& ctx, bool stored) {
+  // Journal de commandes = log de niveau INFO
+  if (!logMqttOn(LogLevel::INFO) || !isMqttConnected()) return;
+
   JsonDocument doc;
   doc["ts"]       = _timestamp;
 
@@ -406,22 +453,27 @@ void Publisher::mqttCallbackStatic(char* topic, byte* payload,
   if (_instance) _instance->_onMqttMessage(topic, payload, length);
 }
 
-void Publisher::_onMqttMessage(char* topic, byte* payload,
-                                unsigned int length) {
+void Publisher::_onMqttMessage(char* topic, byte* payload, unsigned int length) {
+  _mqttRxCount++;
   // Copie payload en string null-terminée
   char buf[256] = {0};
   if (length < sizeof(buf)) {
     memcpy(buf, payload, length);
+  } else {
+    LOG_W(LOG_MQTT, "RX topic='%s' payload too long (%u) — ignored", topic, length);
+    return;
   }
 
-  LOG(LOG_MQTT, "RX topic='%s'", topic);
-
+  LOG_D(LOG_MQTT, "RX topic='%s'", topic);
+  
+  if (strcmp(topic, MQTT_TOPIC_ACK) == 0) {if (_linky) _linky->onIndexAck((uint8_t) atoi(buf));return; }
+  if (strcmp(topic, MQTT_TOPIC_REQUEST) == 0) {if (_linky) _linky->requestIndexPublish();return;}
   if (strstr(topic, "/set"))                              { _handleZoneCmd(topic, buf);    return; }
   if (strcmp(topic, "heatingCmd") == 0)                  { _handleHeatingCmd(buf);         return; }
   if (strcmp(topic, "heatingCtrl_v4/tempo/setCounters") == 0) { _handleSetCounters(buf);  return; }
-  if (strncmp(topic, "utcClock", 8) == 0)                { _handleUtcClock(buf);           return; }
   if (strcmp(topic, "ecowittDatas") == 0)                { _handleEcowitt(buf);            return; }
   if (strcmp(topic, "overrideValues") == 0)              { _handleOverrideValues(buf);     return; }
+  if (strstr(topic, "/log/set"))                         { _handleLogSet(buf);             return; }
 }
 
 void Publisher::_handleZoneCmd(const char* topic, const char* payload) {
@@ -441,22 +493,6 @@ void Publisher::_handleZoneCmd(const char* topic, const char* payload) {
   }
 }
 
-void Publisher::_handleUtcClock(const char* payload) {
-  JsonDocument doc;
-  if (deserializeJson(doc, payload) != DeserializationError::Ok) return;
-
-  int hh = doc["hours"]|(-1), mm = doc["minutes"]|(-1);
-  int ss = doc["seconds"]|0;
-  int day = doc["day"]|(-1), month = doc["month"]|(-1);
-  if (hh < 0 || mm < 0 || day < 1 || month < 1) return;
-
-  _timestamp = (uint32_t)(hh*3600 + mm*60 + ss);
-  LOG(LOG_MQTT, "Clock %02d:%02d:%02d %02d/%02d", hh, mm, ss, day, month);
-  linkyReader.onClock(hh, mm, day, month);
-  scheduleManager.onClock(hh, mm);
-  if (_tempoMgr) _tempoMgr->onClock(hh, mm, (uint8_t)day, (uint8_t)month);
-}
-
 void Publisher::_handleEcowitt(const char* payload) {
   JsonDocument doc;
   if (deserializeJson(doc, payload) != DeserializationError::Ok) return;
@@ -467,7 +503,7 @@ void Publisher::_handleEcowitt(const char* payload) {
 void Publisher::_handleHeatingCmd(const char* payload) {
   JsonDocument doc;
   if (deserializeJson(doc, payload) != DeserializationError::Ok) {
-    LOG(LOG_MQTT, "heatingCmd JSON error");
+    LOG_W(LOG_MQTT, "heatingCmd JSON error");
     return;
   }
 
@@ -475,7 +511,7 @@ void Publisher::_handleHeatingCmd(const char* payload) {
   const char* cmd  = doc["cmd"]  | "";
 
   if (zone < 1 || zone > NUM_ZONES || cmd[0] == '\0') {
-    LOG(LOG_MQTT, "heatingCmd invalid zone=%d cmd=%s", zone, cmd);
+    LOG_W(LOG_MQTT, "heatingCmd invalid zone=%d cmd=%s", zone, cmd);
     return;
   }
 
@@ -506,14 +542,14 @@ void Publisher::_handleSetCounters(const char* payload) {
   // Format : {"red":5,"white":12}
   JsonDocument doc;
   if (deserializeJson(doc, payload) != DeserializationError::Ok) {
-    LOG(LOG_MQTT, "setCounters JSON error");
+    LOG_W(LOG_MQTT, "setCounters JSON error");
     return;
   }
   uint8_t red   = doc["red"]   | 255;
   uint8_t white = doc["white"] | 255;
 
   if (red > 22 || white > 43) {
-    LOG(LOG_MQTT, "setCounters invalid values red=%d white=%d", red, white);
+    LOG_W(LOG_MQTT, "setCounters invalid values red=%d white=%d", red, white);
     return;
   }
 
@@ -527,14 +563,54 @@ void Publisher::_handleOverrideValues(const char* payload) {
   uint8_t iinst  = doc["ovrIinst"]  | 0;
   uint8_t isousc = doc["ovrIsousc"] | 0;
   const char* ptec = doc["ovrPtec"] | "";
-  LOG(LOG_MQTT, "Override Iinst=%u Isousc=%u ptec=%s", iinst, isousc, ptec);
+  LOG_W(LOG_MQTT, "Override Iinst=%u Isousc=%u ptec=%s", iinst, isousc, ptec);
   publishLog("WARN","MQTT","Override Iinst=%u Isousc=%u", iinst, isousc);
   // linkyReader.setOverride(...);
+}
+
+void Publisher::_handleLogSet(const char* payload) {
+  if (applyLogConfigJson(payload)) {
+    char cfg[128];
+    logConfigToJson(cfg, sizeof(cfg));
+    publishLog("INFO", "LOG", "Log config %s", cfg);
+  }
+}
+
+bool Publisher::applyLogConfigJson(const char* json) {
+  JsonDocument doc;
+  if (!json || deserializeJson(doc, json) != DeserializationError::Ok) {
+    LOG_W(LOG_MQTT, "log/set JSON error");
+    return false;
+  }
+  if (doc["serial"].is<bool>())           logSetSerial(doc["serial"].as<bool>());
+  if (doc["mqtt"].is<bool>())             logSetMqtt(doc["mqtt"].as<bool>());
+  if (doc["level"].is<const char*>())     logSetSerialLevel(logLevelFromStr(doc["level"]));
+  if (doc["mqttLevel"].is<const char*>()) logSetMqttLevel(logLevelFromStr(doc["mqttLevel"]));
+  if (doc["profile"].is<const char*>()) {
+    const char* p = doc["profile"];
+    if (strcasecmp(p, "production")  == 0) logSetProduction();
+    if (strcasecmp(p, "development") == 0) logSetDevelopment();
+  }
+  storageManager.saveLogConfig();
+  return true;
+}
+
+void Publisher::logConfigToJson(char* buf, size_t len) const {
+  const LogState& ls = logState();
+  snprintf(buf, len,
+    "{'serial':%s,'level':'%s','mqtt':%s,'mqttLevel':'%s'}",
+    ls.serial ? "true" : "false", logLevelToStr(ls.serialLevel),
+    ls.mqtt   ? "true" : "false", logLevelToStr(ls.mqttLevel));
 }
 
 // =============================================================================
 // HELPERS PRIVÉS
 // =============================================================================
+
+bool Publisher::publishRaw(const char* topic, const char* payload,
+                           bool retain) {
+  return _mqttPublish(topic, payload, retain);
+}
 
 bool Publisher::_mqttPublish(const char* topic, const char* payload,
                               bool retain) {

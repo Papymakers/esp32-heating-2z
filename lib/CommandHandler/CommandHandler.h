@@ -97,6 +97,10 @@ public:
 
   void dumpContext(const CommandContext& ctx) const;
 
+  // Supervision
+  uint32_t getAcceptedCount() const { return _accepted; }
+  uint32_t getRejectedCount() const { return _rejected; }
+
 private:
 
   // Pointeurs vers les modules dépendants (injectés via begin())
@@ -104,6 +108,9 @@ private:
   StorageManager* _storageMgr = nullptr;
   Publisher*      _publisher  = nullptr;
   TempoManager*   _tempoMgr   = nullptr;
+
+  uint32_t _accepted = 0;
+  uint32_t _rejected = 0;
 
   // ---------------------------------------------------------------------------
   // Pipeline interne

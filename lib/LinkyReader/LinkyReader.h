@@ -96,11 +96,14 @@ public:
   void update();
 
   // ---------------------------------------------------------------------------
-  // Horloge UTC (depuis Publisher/MQTT)
-  // Déclenche la publication périodique et les index journaliers
+  // Horloge locale (tick minute du ClockManager, heure NTP valide)
+  // Déclenche les index journaliers. La publication périodique des
+  // valeurs est cadencée par update() et ne dépend plus de l'heure.
   // ---------------------------------------------------------------------------
 
   void onClock(uint8_t hh, uint8_t mm, uint8_t day, uint8_t month);
+  void onIndexAck(uint8_t ackDay);
+  void requestIndexPublish();  
 
   // ---------------------------------------------------------------------------
   // Override debug (injection manuelle via MQTT)
@@ -120,6 +123,14 @@ public:
 
   const LinkySnapshot& getSnapshot()  const { return _snap; }
   bool                 isConnected()  const { return _connected; }
+
+  // Supervision : âge de la dernière trame complète, compteurs de qualité
+  uint32_t lastFrameAgeMs() const {
+    return _lastFrameMs ? (uint32_t)(millis() - _lastFrameMs) : UINT32_MAX;
+  }
+  bool     isDataFresh()    const { return lastFrameAgeMs() < LINKY_STALE_MS; }
+  uint32_t getFrameCount()  const { return _frameCount; }
+  uint32_t getBadLineCount() const { return _badLineCount; }
   uint8_t              getIinst()     const { return _snap.iinst; }
   uint8_t              getIsousc()    const { return _snap.isousc; }
   bool                 isOverload()   const { return _snap.overload; }
@@ -142,6 +153,10 @@ private:
   void   _parseLine();
   void   _processLabel(const char* label, const char* val);
   bool   _validateChecksum(const char* line, int len, char checksum) const;
+
+  // Qualité de liaison
+  uint32_t _frameCount   = 0;
+  uint32_t _badLineCount = 0;
 
   // ---------------------------------------------------------------------------
   // Traitement des étiquettes
@@ -192,15 +207,22 @@ private:
   uint8_t  _mm    = 0;
   uint8_t  _day   = 0;
   uint8_t  _month = 0;
-  int8_t   _lastMinute      = -1;
   uint8_t  _lastHour        = 255;
+  uint32_t _lastValuesPubMs = 0;       // cadence de _publishValues()
+  static constexpr uint32_t VALUES_PUBLISH_MS = 60000;
 
   // Publication index journalier
-  bool     _indexPublished  = false;
+  bool     _indexPublished  = false;  // vrai UNIQUEMENT sur ACK métier reçu
+  bool     _awaitingAck     = false;  // un envoi est en attente de confirmation
+ 
+  int8_t   _lastIndexMinute = -1;  
+  uint32_t _lastAttemptMs   = 0;       // horodatage du dernier essai (backoff)
+  uint8_t  _indexSentDay    = 0;       // jour (1..31) de la trame en attente d'ACK
   uint8_t  _indexAttempts   = 0;
-  int8_t   _lastIndexMinute = -1;
-  static constexpr uint8_t MAX_INDEX_ATTEMPTS = 3;
+  uint8_t  _indexTries      = 0;       // ← compteur de tentatives (pour le bilan)
+
   static constexpr uint8_t INDEX_PUBLISH_HOUR = 23;
+  static constexpr uint32_t INDEX_ACK_TIMEOUT_MS = 20000;  // 20 s avant retry
 
   // Anti-doublon PTEC / DEMAIN
   char     _lastPtec[5]   = {0};
@@ -208,7 +230,7 @@ private:
 
   // Timeout connexion — déconnecté si pas de trame depuis 10s
   unsigned long _lastFrameMs = 0;
-  static constexpr unsigned long LINKY_TIMEOUT_MS = 30000; // 30s
+  static constexpr unsigned long LINKY_TIMEOUT_MS = 10000;
 
   // Dépendances
   Publisher*       _publisher   = nullptr;

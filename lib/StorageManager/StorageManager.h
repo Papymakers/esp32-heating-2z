@@ -1,31 +1,30 @@
 #pragma once
 // =============================================================================
-// StorageManager.h — Persistance EEPROM 24C32 (I2C) + NVS Flash
-// ESP32 Heating Controller v4.0
+// StorageManager.h — Persistance EEPROM I2C 24C32…24C512 + NVS Flash
+// ESP32 Heating Controller v5.1
 // Denis Mattera - 2025
 //
-// Deux couches de stockage :
+// 1. EEPROM 24C32 à 24C512 (adressage 16 bits, page déclarée 32 o) :
+//    24C32 / 24LC32A / AT24C32 … 24CS512, 24LC512, AT24C512
+//    (taille fixe, pas de détection ; n° de série et ID fabricant facultatifs)
+//    Données utilisateur, survie aux coupures. Carte mémoire dans config.h :
+//      0x0000  en-tête (magic "NAUC" + version de layout)
+//      0x0010  commandes zones (16 o / zone)
+//      0x0050  flags système, 0x0054-55 compteurs Tempo
+//      0x0100  profils calendrier (64 o / profil)
+//      0x0300  associations zone/jour (16 o / zone)
+//    Au démarrage : en-tête absent (puce vierge) ou étranger → formatage
+//    de la zone utilisée (0x0000-0x03FF) et écriture de l'en-tête.
 //
-// 1. EEPROM 24C32 (I2C, 4KB) — données critiques survie au reboot
-//    Accès lent (~5ms/écriture), endurance 1M cycles
-//    Contenu :
-//      [0x000-0x027] Commandes zones    (4 × 10 octets)
-//      [0x028-0x02F] Flags système      (8 octets)
-//      [0x030-0x22F] Profils calendrier (8 profils × nom + 48 slots)
-//      [0x230-0x25F] Associations zone/jour (4 zones × 7 jours + flags)
+//    Registre de sécurité 24CSxxx uniquement (adresse I2C 0x58) :
+//      0x0800-0x080F  n° de série 128 bits, unique, lecture seule
+//      0x0880-0x08FF  page ID 128 o, programmable puis verrouillable
+//    Le n° de série sert à identifier le module (journal, /api/state,
+//    MQTT au boot) et à détecter un changement de module EEPROM (n° de
+//    série comparé à celui mémorisé en NVS côté ESP32). Sans n° de série
+//    (24LC512, AT24C512), le changement de module n'est pas détectable.
 //
-// 2. NVS Flash ESP32 — configuration système (grande capacité, key/value)
-//    Accès rapide, endurance 10k cycles sur même secteur
-//    Contenu :
-//      Config Tempo (enabled, règles)
-//      Config Overload (seuils, fallback)
-//      Config réseau (si modifiable)
-//      Config Overload personnalisée
-//
-// Stratégie :
-//   - Commandes zones → EEPROM (critique, survie coupure secteur)
-//   - Profils calendrier → EEPROM (données volumineuses)
-//   - Config modules → NVS Flash (petites config, accès fréquent)
+// 2. NVS Flash ESP32 — configuration (Tempo, délestage, traces, n° série)
 // =============================================================================
 
 #include <Arduino.h>
@@ -34,31 +33,20 @@
 #include "types.h"
 #include "config.h"
 
-// =============================================================================
-// LAYOUT EEPROM 24C32 (4096 octets)
-// =============================================================================
+// Commandes zones : chaîne de 10 octets max dans un enregistrement de 16
+constexpr uint16_t EE_ZONE_SIZE       = 10;
 
-// Zones : 4 × 10 octets = 40 octets [0x000-0x027]
-constexpr uint16_t EE_ZONE_SIZE       = 10;    // Octets par zone
-// (défini dans config.h : EE_ZONE_BASE = 0x000)
-
-// Flags système : 8 octets [0x028-0x02F]
-// Byte 0 : bit0=tempoEnabled, bit1=scheduleEnabled, bit2=overloadEnabled
-// (défini dans config.h : EE_SYS_FLAGS = 0x028)
+// Flags système (1 octet)
 constexpr uint8_t  EE_FLAG_TEMPO      = 0x01;
 constexpr uint8_t  EE_FLAG_SCHEDULE   = 0x02;
 constexpr uint8_t  EE_FLAG_OVERLOAD   = 0x04;
 
-// Profils calendrier [0x030-0x22F]
-// 8 profils × (12 octets nom + 48 octets slots) = 8 × 60 = 480 octets
-// (défini dans config.h : EE_PROFILES_BASE = 0x030)
-constexpr uint16_t EE_PROFILE_SIZE    = PROFILE_NAME_LEN + SLOTS_PER_DAY;  // 60 octets
-// Total profils : 8 × 60 = 480 octets → [0x030-0x21F]
+// Profil : 12 o nom + 48 o slots = 60 o dans un enregistrement de 64
+constexpr uint16_t EE_PROFILE_SIZE    = PROFILE_NAME_LEN + SLOTS_PER_DAY;
+static_assert(EE_PROFILE_SIZE <= EE_PROFILE_STRIDE, "profil > stride");
 
-// Associations zone/jour [0x230-0x25F]
-// 4 zones × (7 jours × 1 octet + 1 flag) = 4 × 8 = 32 octets
-// (défini dans config.h : EE_SCHEDULE_BASE = 0x230)
-constexpr uint16_t EE_ZONE_SCHED_SIZE = 8;   // 7 jours + 1 flag enabled
+// Association zone/jour : 7 o + 1 flag = 8 o dans un enregistrement de 16
+constexpr uint16_t EE_ZONE_SCHED_SIZE = 8;
 
 // =============================================================================
 // NAMESPACES NVS
@@ -79,10 +67,32 @@ public:
   // Initialisation
   // ---------------------------------------------------------------------------
 
-  // Retourne true si EEPROM 24C32 détectée sur le bus I2C
+  // Retourne true si l'EEPROM répond sur le bus I2C
   bool begin();
 
   bool isEepromPresent() const { return _eepromOk; }
+
+  // ---------------------------------------------------------------------------
+  // Identification de la puce (facultative : 24CSxxx seulement)
+  // ---------------------------------------------------------------------------
+  bool        hasSerial()       const { return _serialOk; }
+  const char* getSerialHex()    const { return _serialHex; }   // 32 car. hex
+  uint32_t    getMfgId()        const { return _mfgId; }       // 0 = non lu
+  const char* chipName()        const;  // "24CS512", "EEPROM (sans ID)"…
+  bool        serialChanged()   const { return _serialChanged; } // module remplacé
+  bool        wasFormatted()    const { return _formatted; }     // en-tête écrit au boot
+
+  // Lecture de la page ID utilisateur (128 o, 0x0880) — réservée à un usage
+  // futur (révision carte, date de fabrication…). Écriture/verrouillage non
+  // implémentés volontairement : le verrouillage est irréversible.
+  bool readIdPage(uint8_t* buf, uint8_t len);
+
+  // Supervision : re-sonde l'EEPROM (détecte perte ET retour du composant)
+  bool recheck();
+  uint32_t getErrorCount() const { return _errorCount; }
+
+  // Calendrier persistant : disponible dès la 24C32 (carte mémoire = 1 Ko).
+  static constexpr bool hasCalendarStorage() { return EEPROM_ADDR_16; }
 
   // ---------------------------------------------------------------------------
   // EEPROM — Commandes zones
@@ -109,6 +119,11 @@ public:
                     bool& scheduleEnabled,
                     bool& overloadEnabled);
 
+  // Mémorise le seul bit « calendrier actif » (lecture-modification-
+  // écriture, écriture évitée si inchangé). Tempo et délestage ont leur
+  // propre configuration persistante ; leurs bits restent neutres.
+  bool saveScheduleFlag(bool enabled);
+
   // ---------------------------------------------------------------------------
   // EEPROM — Profils calendrier
   // ---------------------------------------------------------------------------
@@ -134,7 +149,7 @@ public:
   // EEPROM — Utilitaires
   // ---------------------------------------------------------------------------
 
-  // Efface toute l'EEPROM (0xFF)
+  // Efface la zone utilisée (0x0000–EE_USED_END) puis réécrit l'en-tête
   bool eraseAll();
 
   // Vérifie la présence de l'EEPROM sur le bus I2C
@@ -182,6 +197,13 @@ public:
   void clearNvs(const char* ns);
 
   // ---------------------------------------------------------------------------
+  // NVS Flash — Réglages des traces (voir Logger.h / log_config.h)
+  // ---------------------------------------------------------------------------
+
+  bool saveLogConfig();   // sauvegarde l'état courant de logState()
+  bool loadLogConfig();   // applique la config NVS si elle existe
+
+  // ---------------------------------------------------------------------------
   // Debug
   // ---------------------------------------------------------------------------
 
@@ -190,6 +212,22 @@ public:
 private:
 
   bool        _eepromOk = false;
+  mutable uint32_t _errorCount = 0;   // erreurs I2C depuis le boot
+
+  // Identification
+  bool        _serialOk      = false;
+  bool        _serialChanged = false;
+  bool        _formatted     = false;
+  uint8_t     _serial[16]    = {0};
+  char        _serialHex[33] = {0};
+  uint32_t    _mfgId         = 0;
+
+  bool _readSerial();
+  bool _readMfgId();
+  void _checkSerialChange();
+  bool _checkHeader();          // formate si vierge / étrangère
+  bool _writeHeader();
+  bool _fill(uint16_t from, uint16_t to, uint8_t val);
   Preferences _prefs;
 
   // ---------------------------------------------------------------------------
@@ -201,21 +239,24 @@ private:
 
   // Écriture d'un seul octet
   bool _writeByte(uint16_t addr, uint8_t val);
+
+  // Attend la fin du cycle d'écriture interne (ACK polling, max ~10 ms)
+  bool _waitReady() const;
   bool _readByte (uint16_t addr, uint8_t& val) const;
 
   // Adresse EEPROM d'une zone (0-indexed)
   static constexpr uint16_t _zoneAddr(uint8_t zi) {
-    return EE_ZONE_BASE + zi * EE_ZONE_SIZE;
+    return EE_ZONE_BASE + zi * EE_ZONE_STRIDE;
   }
 
   // Adresse EEPROM d'un profil (0-indexed)
   static constexpr uint16_t _profileAddr(uint8_t pi) {
-    return EE_PROFILES_BASE + pi * EE_PROFILE_SIZE;
+    return EE_PROFILES_BASE + pi * EE_PROFILE_STRIDE;
   }
 
   // Adresse EEPROM d'une association zone/jour (0-indexed)
   static constexpr uint16_t _schedAddr(uint8_t zi) {
-    return EE_SCHEDULE_BASE + zi * EE_ZONE_SCHED_SIZE;
+    return EE_SCHEDULE_BASE + zi * EE_SCHED_STRIDE;
   }
 
   // Validation d'une commande string

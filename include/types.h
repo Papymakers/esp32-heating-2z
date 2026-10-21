@@ -51,12 +51,13 @@ enum class SystemEvent : uint8_t {
 
 // =============================================================================
 // COMMANDES DE CHAUFFAGE
-// Fil pilote : 2 fils (pos/neg), tension 230V via MOC3041 (actif bas)
-//   STOP  : pos=LOW,  neg=HIGH  → demi-onde négative
-//   HG    : pos=HIGH, neg=LOW   → demi-onde positive
-//   ECO   : pos=LOW,  neg=LOW   → pas de signal
-//   CONF  : pos=HIGH, neg=HIGH  → signal complet
-//   CM2   : alternance 7s/293s (CONF-2°C)
+// Fil pilote : 2 fils (pos/neg), tension 230V via MOC304x (actif bas :
+// sortie LOW = LED allumée = triac passant = demi-alternance transmise)
+//   STOP  : pos=LOW,  neg=HIGH  → demi-alternance positive (Arrêt)
+//   HG    : pos=HIGH, neg=LOW   → demi-alternance négative (Hors-gel)
+//   ECO   : pos=LOW,  neg=LOW   → alternance complète      (Éco)
+//   CONF  : pos=HIGH, neg=HIGH  → pas de signal            (Confort)
+//   CM2   : Confort -2°C = 7 s d'alternance complète puis 293 s sans signal
 // =============================================================================
 
 enum class HeatingCmd : uint8_t {
@@ -174,8 +175,8 @@ struct ZoneSchedule {
 // =============================================================================
 
 enum class Cm2Mode : uint8_t {
-  MODE_7S,      // Phase courte CONF (7s)
-  MODE_293S     // Phase longue ECO  (293s)
+  MODE_7S,      // Phase courte : alternance complète (motif ECO) 7 s
+  MODE_293S     // Phase longue : pas de signal (motif CONF) 293 s
 };
 
 struct ZoneData {
@@ -198,11 +199,11 @@ struct ZoneData {
 // =============================================================================
 
 struct PhysicalSwitch {
-  volatile bool pressed;
-  uint8_t       clickCount;
-  unsigned long lastDebounce;
-  int           zone;
-  bool          glitch;   // true = ISR déclenchée mais pin encore HIGH (parasite)
+  volatile bool          pressed;
+  uint8_t                clickCount;   // Nombre de clics depuis dernier traitement
+  volatile unsigned long lastDebounce; // écrit par l'ISR, lu par loop()
+  int           zone;            // Zone associée (switch zone sélection)
+  bool         glitch;         // Flag de glitch (pin encore HIGH à l'ISR)
 };
 
 struct BootButton {
@@ -277,10 +278,10 @@ inline const char* systemStateToStr(SystemState s) {
 
 inline const char* tempoColorToStr(TempoColor c) {
   switch (c) {
-    case TempoColor::TEMPO_BLUE:  return "BLUE";
-    case TempoColor::TEMPO_WHITE: return "WHITE";
-    case TempoColor::TEMPO_RED:   return "RED";
-    default:                return "UNKNOWN";
+    case TempoColor::TEMPO_BLUE:  return "BLEU";
+    case TempoColor::TEMPO_WHITE: return "BLANC";
+    case TempoColor::TEMPO_RED:   return "ROUGE";
+    default:                      return "UNKNOWN";
   }
 }
 

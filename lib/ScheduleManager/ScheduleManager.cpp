@@ -8,6 +8,7 @@
 #include "CommandHandler.h"
 #include "StorageManager.h"
 #include "Publisher.h"
+#include "ZoneManager.h"
 #include <ArduinoJson.h>
 
 // Instance globale
@@ -43,6 +44,8 @@ void ScheduleManager::begin(CommandHandler* cmdHandler,
     }
   }
 
+  for (uint8_t z = 0; z < NUM_ZONES; z++) _lastSchedCmd[z] = HeatingCmd::UNKNOWN;
+
   _enabled         = false;
   _lastAppliedSlot = 255;  // Forcer 1er apply au boot
   _lastAppliedDow  = 255;
@@ -56,25 +59,42 @@ void ScheduleManager::begin(CommandHandler* cmdHandler,
 // =============================================================================
 
 void ScheduleManager::onClock(uint8_t hh, uint8_t mm) {
-  _currentHh = hh;
-  _currentMm = mm;
+  _currentHh  = hh;
+  _currentMm  = mm;
+  _clockKnown = true;
 
   uint8_t slot = _toSlot(hh, mm);
   _currentSlot = slot;
 
-  // Jour de semaine simplifié — mis à jour depuis Publisher::_handleUtcClock
-  // via _currentDow (setter à ajouter si nécessaire)
-
   if (!_enabled) return;
+
+  // Sans jour de semaine connu, le profil du lundi serait appliqué tous
+  // les jours : on le signale une fois (sans bloquer, un profil identique
+  // toute la semaine reste correct).
+  if (!_dowKnown && !_dowWarned) {
+    _dowWarned = true;
+    LOG_W(LOG_SCHED, "Day of week unknown — Monday profile used");
+    if (_publisher) _publisher->publishLog("WARN", "SCHED",
+      "Jour de semaine inconnu : profil du lundi appliqué");
+  }
 
   // Application uniquement si le slot a changé (toutes les 30min)
   if (_slotChanged(slot, _currentDow)) {
-    LOG(LOG_SCHED, "Slot change: %02d:%02d → slot %d (dow=%d)",
+    LOG_D(LOG_SCHED, "Slot change: %02d:%02d → slot %d (dow=%d)",
         hh, mm, slot, _currentDow);
     _applySlot(_currentDow, slot);
     _lastAppliedSlot = slot;
     _lastAppliedDow  = _currentDow;
   }
+}
+
+void ScheduleManager::setDayOfWeek(uint8_t dow) {
+  if (dow > 6) return;
+  if (!_dowKnown || dow != _currentDow) {
+    LOG_D(LOG_SCHED, "Day of week = %u", dow);
+  }
+  _currentDow = dow;
+  _dowKnown   = true;
 }
 
 // =============================================================================
@@ -310,9 +330,13 @@ void ScheduleManager::loadAll() {
 // =============================================================================
 
 void ScheduleManager::applyNow() {
-  if (!_enabled) return;
+  // Sans heure connue, le créneau courant n'a pas de sens (il vaudrait
+  // lundi 00:00) : le premier tick d'horloge fera l'application.
+  if (!_enabled || !_clockKnown) return;
   _lastAppliedSlot = 255;  // Force recalcul
-  _applySlot(_currentDow, _currentSlot);
+  // Application demandée (activation, nouvelles affectations) : le
+  // calendrier reprend la main, dérogations manuelles comprises
+  _applySlot(_currentDow, _currentSlot, true);
   _lastAppliedSlot = _currentSlot;
   _lastAppliedDow  = _currentDow;
 }
@@ -369,7 +393,7 @@ bool ScheduleManager::profileFromJson(uint8_t     profileIndex,
 
   JsonDocument doc;
   if (deserializeJson(doc, json) != DeserializationError::Ok) {
-    LOG(LOG_SCHED, "profileFromJson parse error (profile %d)", profileIndex);
+    LOG_W(LOG_SCHED, "profileFromJson parse error (profile %d)", profileIndex);
     return false;
   }
 
@@ -378,6 +402,19 @@ bool ScheduleManager::profileFromJson(uint8_t     profileIndex,
   const char* name = doc["name"] | "";
   strncpy(p.name, name, PROFILE_NAME_LEN - 1);
   p.name[PROFILE_NAME_LEN - 1] = '\0';
+
+  // Troncature à 11 octets : ne pas couper un caractère UTF-8 accentué
+  // (sinon octet isolé affiché comme caractère parasite)
+  size_t n = strlen(p.name);
+  if (n > 0) {
+    size_t i = n - 1;
+    while (i > 0 && ((uint8_t)p.name[i] & 0xC0) == 0x80) i--;
+    uint8_t lead = (uint8_t)p.name[i];
+    size_t need = (lead < 0x80) ? 1 : (lead >= 0xF0) ? 4 : (lead >= 0xE0) ? 3 : 2;
+    if (i + need > n) p.name[i] = '\0';
+  }
+  // Nom vide : nom par défaut (un nom vide serait lu comme emplacement libre)
+  if (p.name[0] == '\0') snprintf(p.name, PROFILE_NAME_LEN, "Profile%u", profileIndex);
   p.active = true;
 
   JsonArray slots = doc["slots"];
@@ -442,14 +479,14 @@ bool ScheduleManager::scheduleFromJson(const char* json) {
 
   JsonDocument doc;
   if (deserializeJson(doc, json) != DeserializationError::Ok) {
-    LOG(LOG_SCHED, "scheduleFromJson parse error");
+    LOG_W(LOG_SCHED, "scheduleFromJson parse error");
     return false;
   }
 
-  // Activation globale
-  if (doc["enabled"].is<bool>()) {
-    setEnabled(doc["enabled"].as<bool>());
-  }
+  // Activation globale demandée (appliquée APRÈS les associations, pour que
+  // l'application immédiate utilise les nouvelles affectations)
+  bool wantEnabled = doc["enabled"].is<bool>() ? doc["enabled"].as<bool>()
+                                               : _enabled;
 
   // Associations zones
   JsonArray zones = doc["zones"];
@@ -475,6 +512,15 @@ bool ScheduleManager::scheduleFromJson(const char* json) {
 
   LOG(LOG_SCHED, "Schedule loaded from JSON");
   saveAll();
+
+  // v5.1.4 : l'activation globale est mémorisée en EEPROM (elle était
+  // perdue à chaque redémarrage : calendrier inactif après un reboot).
+  if (wantEnabled != _enabled) {
+    setEnabled(wantEnabled);              // applique le créneau si activé
+  } else if (_enabled && zones.size() > 0) {
+    applyNow();                           // nouvelles affectations : effet immédiat
+  }
+  if (_storageMgr) _storageMgr->saveScheduleFlag(_enabled);
   return true;
 }
 
@@ -490,20 +536,21 @@ bool ScheduleManager::_slotChanged(uint8_t slot, uint8_t dow) const {
   return (slot != _lastAppliedSlot) || (dow != _lastAppliedDow);
 }
 
-void ScheduleManager::_applySlot(uint8_t dow, uint8_t slot) {
+void ScheduleManager::_applySlot(uint8_t dow, uint8_t slot, bool force) {
   if (!_enabled) return;
 
-  LOG(LOG_SCHED, "Applying slot %d (dow=%d time=%02d:%02d)",
+  LOG_D(LOG_SCHED, "Applying slot %d (dow=%d time=%02d:%02d)",
       slot, dow, _currentHh, _currentMm);
 
   for (uint8_t z = 1; z <= NUM_ZONES; z++) {
-    _applyZoneSlot(z, dow, slot);
+    _applyZoneSlot(z, dow, slot, force);
   }
 }
 
 void ScheduleManager::_applyZoneSlot(uint8_t zoneId,
                                       uint8_t dow,
-                                      uint8_t slot) {
+                                      uint8_t slot,
+                                      bool    force) {
   if (!_cmdHandler) return;
 
   uint8_t zi = zoneId - 1;
@@ -514,10 +561,29 @@ void ScheduleManager::_applyZoneSlot(uint8_t zoneId,
   // Récupère la commande planifiée
   HeatingCmd cmd = getScheduledCmd(zoneId, dow, slot);
 
-  LOG(LOG_SCHED, "Z%d slot%d → %s (profile[%d])",
+  LOG_D(LOG_SCHED, "Z%d slot%d → %s (profile[%d])",
       zoneId, slot,
       heatingCmdToStr(cmd),
       _schedules[zi].profileIndex[dow]);
+
+  // Dérogation manuelle : une commande utilisateur (switch, WebUI, MQTT)
+  // tient jusqu'au prochain CHANGEMENT de commande du calendrier pour cette
+  // zone (ou jusqu'à une application forcée). Tempo et délestage, de
+  // priorité supérieure, ne sont jamais levés ici.
+  bool changed = (cmd != _lastSchedCmd[zi]);
+  _lastSchedCmd[zi] = cmd;
+
+  ZoneData& zd = zoneManager.getZoneMutable(zoneId);
+  if ((changed || force) && zd.activePriority == CommandPriority::PRIO_USER) {
+    zd.activePriority = CommandPriority::PRIO_DEFAULT;
+    LOG(LOG_SCHED, "Z%d manual override ended (%s) — schedule: %s",
+        zoneId, heatingCmdToStr(zd.currentCmd), heatingCmdToStr(cmd));
+    if (_publisher) {
+      _publisher->publishLog("INFO", "SCHED",
+        "Z%d : fin de dérogation manuelle (%s), retour au calendrier : %s",
+        zoneId, heatingCmdToStr(zd.currentCmd), heatingCmdToStr(cmd));
+    }
+  }
 
   // Application via CommandHandler (priorité PRIO_SCHEDULE)
   // Le CommandHandler vérifiera si Tempo/Overload/User prend la priorité
@@ -532,6 +598,7 @@ void ScheduleManager::_applyZoneSlot(uint8_t zoneId,
 // =============================================================================
 
 void ScheduleManager::dumpProfile(uint8_t profileIndex) const {
+  if (!LOG_RAW_ENABLED()) return;   // dump série = niveau DEBUG
   if (profileIndex >= MAX_PROFILES) return;
   const ScheduleProfile& p = _profiles[profileIndex];
 
@@ -553,6 +620,7 @@ void ScheduleManager::dumpProfile(uint8_t profileIndex) const {
 }
 
 void ScheduleManager::dumpZoneSchedule(uint8_t zoneId) const {
+  if (!LOG_RAW_ENABLED()) return;   // dump série = niveau DEBUG
   if (zoneId < 1 || zoneId > NUM_ZONES) return;
   uint8_t zi = zoneId - 1;
 
@@ -569,6 +637,7 @@ void ScheduleManager::dumpZoneSchedule(uint8_t zoneId) const {
 }
 
 void ScheduleManager::dumpAll() const {
+  if (!LOG_RAW_ENABLED()) return;   // dump série = niveau DEBUG
   Serial.printf("%s === ScheduleManager ===\n", LOG_SCHED);
   Serial.printf("%s   enabled=%d profiles=%d slot=%d dow=%d\n",
                 LOG_SCHED, _enabled, getProfileCount(),

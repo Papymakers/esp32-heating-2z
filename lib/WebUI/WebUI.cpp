@@ -1,6 +1,6 @@
 // =============================================================================
 // WebUI.cpp — Serveur HTTP + Interface web
-// ESP32 Heating Controller v4.0
+// ESP32 Heating Controller v5.1
 // Denis Mattera - 2025
 // =============================================================================
 
@@ -14,6 +14,8 @@
 #include "DisplayManager.h"
 #include "Publisher.h"
 #include "LinkyReader.h"
+#include "Supervisor.h"
+#include "ClockManager.h"
 #include <WiFi.h>
 
 // Instance globale
@@ -153,6 +155,17 @@ const char WebUI::HTML_PAGE[] PROGMEM = R"rawhtml(
   @media (max-width: 600px) {
     .grid2, .grid4 { grid-template-columns: 1fr 1fr; }
   }
+  /* --- Message de confirmation (toast) --- */
+  .toast { position: fixed; left: 50%; bottom: 24px;
+           transform: translateX(-50%) translateY(20px);
+           max-width: 90%; padding: 10px 18px; border-radius: var(--radius);
+           font-size: 0.9em; color: #000; opacity: 0; pointer-events: none;
+           transition: opacity .25s, transform .25s; z-index: 1000;
+           box-shadow: 0 4px 12px rgba(0,0,0,.4); }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  .toast-ok   { background: var(--green); }
+  .toast-err  { background: var(--red); }
+  .toast-info { background: var(--blue); }
 </style>
 </head>
 <body>
@@ -347,11 +360,14 @@ const char WebUI::HTML_PAGE[] PROGMEM = R"rawhtml(
         <option value="2" selected>2 zones</option>
       </select>
     </div>
+    <button class="btn btn-ECO" style="margin-top:12px"
+            onclick="rebootEsp()">↻ Redémarrer</button>
     <button class="btn btn-STOP" style="margin-top:12px;background:#7f0000"
             onclick="eraseEeprom()">⚠ Effacer EEPROM + Redémarrer</button>
   </div>
 
 </div><!-- /container -->
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
 
 <script>
 // =============================================================================
@@ -516,11 +532,9 @@ function selectZone(z) {
 }
 
 function sendCmd(cmd) {
-  fetch('/api/zone', {
-    method: 'POST',
-    headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({ zone: selectedZone, cmd: cmd })
-  }).catch(e => console.warn('sendCmd error', e));
+  // Succès : l'état de la zone se met à jour à l'écran ; seul un refus
+  // (priorité Tempo / délestage, zone verrouillée) est signalé
+  apiPost('/api/zone', { zone: selectedZone, cmd: cmd }, null);
 }
 
 // =============================================================================
@@ -650,11 +664,8 @@ function saveProfile() {
   el('profile-select').options[pi].textContent = name;
   buildAssignGrid();
 
-  fetch('/api/profile', {
-    method: 'POST',
-    headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({ index: pi, name, slots })
-  }).then(r => r.json()).then(r => console.log('Profile saved:', r));
+  apiPost('/api/profile', { index: pi, name, slots },
+          `Profil « ${name} » enregistré`);
 }
 
 // =============================================================================
@@ -702,26 +713,25 @@ function saveSchedule() {
     const enabled = el('sched-enabled').checked;
     zones.push({ id: z, enabled, days });
   }
-  fetch('/api/schedule', {
-    method: 'POST',
-    headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({ enabled: el('sched-enabled').checked, zones })
-  }).then(r => r.json()).then(r => console.log('Schedule saved:', r));
+  apiPost('/api/schedule', { enabled: el('sched-enabled').checked, zones },
+          'Assignations enregistrées');
 }
 
 // =============================================================================
 // API CALLS
 // =============================================================================
 function setTempoEnabled(v) {
-  postConfig('/api/config/tempo', { enabled: v });
+  postConfig('/api/config/tempo', { enabled: v },
+             v ? 'Tempo activé' : 'Tempo désactivé');
 }
 function setTempoRule(key, v) {
   const body = {};
   body[key] = v;
-  postConfig('/api/config/tempo', body);
+  postConfig('/api/config/tempo', body, 'Règle Tempo enregistrée');
 }
 function setOvldEnabled(v) {
-  postConfig('/api/config/ovld', { enabled: v });
+  postConfig('/api/config/ovld', { enabled: v },
+             v ? 'Délestage activé' : 'Délestage désactivé');
 }
 function saveOvldConfig() {
   if (!confirm('Sauvegarder la configuration délestage ?')) return;
@@ -730,31 +740,70 @@ function saveOvldConfig() {
     thresholdMs: parseInt(el('ovld-threshold').value) * 1000,
     restoreMs:   parseInt(el('ovld-restore').value)   * 1000,
     fallback:    el('ovld-fallback').value
-  });
+  }, 'Configuration délestage enregistrée');
   _pollPaused = false;
 }
 function forceRestore() {
   if (!confirm('Forcer la restauration des zones ?\n(Annule le délestage en cours et restaure les commandes normales)')) return;
-  postConfig('/api/config/ovld', { forceRestore: true });
+  postConfig('/api/config/ovld', { forceRestore: true }, 'Zones restaurées');
 }
 function setSchedEnabled(v) {
-  postConfig('/api/schedule', { enabled: v, zones: [] });
+  postConfig('/api/schedule', { enabled: v, zones: [] },
+             v ? 'Calendrier activé' : 'Calendrier désactivé');
 }
 function setZoneCount(v) {
-  postConfig('/api/config/zones', { count: parseInt(v) });
+  postConfig('/api/config/zones', { count: parseInt(v) }, 'Nombre de zones enregistré');
+}
+function rebootEsp() {
+  if (!confirm('Redémarrer l\'ESP32 ?\nLes zones reprennent leur commande mémorisée, puis le calendrier reprend la main s\'il est actif.')) return;
+  apiPost('/api/reboot', { confirm: true }, null).then(ok => {
+    if (!ok) return;
+    toast('↻ Redémarrage en cours… la page se recharge dans 8 s', 'info', 8000);
+    setTimeout(() => location.reload(), 8000);
+  });
 }
 function eraseEeprom() {
   if (!confirm('⚠ Effacer toute la mémoire EEPROM ?\nLes zones reprendront ECO au redémarrage.\n\n⚡ L\'ESP32 va redémarrer automatiquement !')) return;
-  postConfig('/api/eeprom/erase', { confirm: true });
+  apiPost('/api/eeprom/erase', { confirm: true }, null).then(ok => {
+    if (!ok) return;
+    toast('✓ EEPROM effacée — redémarrage, la page se recharge dans 8 s', 'ok', 8000);
+    setTimeout(() => location.reload(), 8000);
+  });
 }
 
-function postConfig(url, body) {
-  fetch(url, {
+function postConfig(url, body, okMsg = 'Réglage enregistré') {
+  return apiPost(url, body, okMsg);
+}
+
+// Message de confirmation : 'ok' (vert), 'err' (rouge), 'info' (bleu)
+let _toastTimer = null;
+function toast(msg, kind = 'ok', ms = 3000) {
+  const t = el('toast');
+  if (!t) return;
+  t.textContent = msg;
+  t.className = 'toast show toast-' + kind;
+  clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => { t.className = 'toast'; }, ms);
+}
+
+// POST JSON + confirmation visible. okMsg = null : succès silencieux.
+// Retourne une promesse résolue à true si l'ESP32 a accepté la requête.
+function apiPost(url, body, okMsg) {
+  return fetch(url, {
     method: 'POST',
     headers: {'Content-Type':'application/json'},
     body: JSON.stringify(body)
-  }).then(r=>r.json()).then(r=>console.log(url, r))
-    .catch(e=>console.error(url, e));
+  }).then(r => r.json().catch(() => ({})).then(j => {
+    const ok = r.ok && j.status !== 'error';
+    if (ok) { if (okMsg) toast('✓ ' + okMsg, 'ok'); }
+    else    toast('✗ ' + (j.msg || ('Erreur HTTP ' + r.status)), 'err', 5000);
+    console.log(url, r.status, j);
+    return ok;
+  })).catch(e => {
+    toast('✗ Pas de réponse de l\'ESP32', 'err', 5000);
+    console.error(url, e);
+    return false;
+  });
 }
 
 // =============================================================================
@@ -868,7 +917,11 @@ void WebUI::_registerRoutes() {
   _server.on("/api/config/ovld",   HTTP_POST, [this]{ _handleApiConfigOverload();});
   _server.on("/api/config/zones",  HTTP_POST, [this]{ _handleApiConfigZones();  });
   _server.on("/api/eeprom/erase",  HTTP_POST, [this]{ _handleApiEepromErase();  });
+  _server.on("/api/reboot",        HTTP_POST, [this]{ _handleApiReboot();       });
   _server.on("/api/debug",         HTTP_GET,  [this]{ _handleApiDebug();        });
+  _server.on("/api/health",        HTTP_GET,  [this]{ _handleApiHealth();       });
+  _server.on("/api/trace",         HTTP_GET,  [this]{ _handleApiTrace();        });
+  _server.on("/api/config/log",    HTTP_POST, [this]{ _handleApiConfigLog();    });
   _server.onNotFound(              [this]{ _handleNotFound();                   });
 }
 
@@ -877,6 +930,7 @@ void WebUI::_registerRoutes() {
 // =============================================================================
 
 void WebUI::_handleRoot() {
+  _requests++;
   _server.send_P(200, "text/html; charset=utf-8", HTML_PAGE);
 }
 
@@ -884,7 +938,7 @@ void WebUI::_handleApiState() {
   JsonDocument doc;
 
   // Header
-  char ver[20];
+  char ver[32];
   getVersion(ver, sizeof(ver));
   doc["fw"] = ver;
 
@@ -934,8 +988,33 @@ void WebUI::_handleApiState() {
     doc["overload"]      = _overloadMgr->isOverloaded();
   }
 
-  // Capacités hardware — calendrier disponible uniquement avec 24C32
-  doc["hasCalendar"] = (bool)EEPROM_ADDR_16;
+  // Capacités hardware — calendrier disponible (EEPROM 24C32 et plus)
+  doc["hasCalendar"] = StorageManager::hasCalendarStorage();
+
+  // Identification EEPROM et réglage des traces
+  if (_storageMgr) {
+    doc["eepromOk"]     = _storageMgr->isEepromPresent();
+    doc["eepromChip"]   = _storageMgr->chipName();
+    doc["eepromSerial"] = _storageMgr->hasSerial() ? _storageMgr->getSerialHex() : "";
+  }
+
+  // Afficheur détecté, identifiant MQTT, heure NTP (v5.1)
+  if (_displayMgr) doc["display"] = _displayMgr->getTypeStr();
+  if (_publisher)  doc["mqttId"]  = _publisher->getClientId();
+  {
+    char tbuf[24];
+    clockManager.format(tbuf, sizeof(tbuf));
+    doc["ntpSynced"] = clockManager.isValid();
+    doc["time"]      = tbuf;
+  }
+  {
+    const LogState& ls = logState();
+    JsonObject lo = doc["log"].to<JsonObject>();
+    lo["serial"]    = ls.serial;
+    lo["level"]     = logLevelToStr(ls.serialLevel);
+    lo["mqtt"]      = ls.mqtt;
+    lo["mqttLevel"] = logLevelToStr(ls.mqttLevel);
+  }
 
   // Schedule
   if (_scheduleMgr) {
@@ -956,9 +1035,9 @@ void WebUI::_handleApiState() {
     }
   }
 
-  char buf[1024];
-  serializeJson(doc, buf, sizeof(buf));
-  _sendJson(buf);
+  String out;                      // heap : le JSON dépasse 1 Ko en v5
+  serializeJson(doc, out);
+  _sendJson(out.c_str());
 }
 
 void WebUI::_handleApiProfiles() {
@@ -979,9 +1058,11 @@ void WebUI::_handleApiProfiles() {
     }
   }
 
-  char buf[4096];
-  serializeJson(doc, buf, sizeof(buf));
-  _sendJson(buf);
+  // Sérialisation sur le heap : un buffer de 4 Ko sur la pile de loopTask
+  // (8 Ko par défaut) risquait un débordement de pile.
+  String out;
+  serializeJson(doc, out);
+  _sendJson(out.c_str());
 }
 
 void WebUI::_handleApiSchedule() {
@@ -993,6 +1074,10 @@ void WebUI::_handleApiSchedule() {
 
 void WebUI::_handleApiPostProfile() {
   if (!_scheduleMgr) { _sendError("No ScheduleManager"); return; }
+  if (!StorageManager::hasCalendarStorage()) {
+    _sendError("Calendrier indisponible : EEPROM 24C32 ou plus requise", 409);
+    return;
+  }
 
   JsonDocument doc;
   if (!_parseBody(doc)) return;
@@ -1000,32 +1085,36 @@ void WebUI::_handleApiPostProfile() {
   uint8_t pi = doc["index"] | 255;
   if (pi >= MAX_PROFILES) { _sendError("Invalid profile index"); return; }
 
-  char jsonBuf[2048];
-  serializeJson(doc, jsonBuf, sizeof(jsonBuf));
+  String jsonBuf;
+  serializeJson(doc, jsonBuf);
 
-  if (_scheduleMgr->profileFromJson(pi, jsonBuf)) {
+  if (_scheduleMgr->profileFromJson(pi, jsonBuf.c_str())) {
     _sendOk("profile saved");
     if (_publisher) {
       _publisher->publishLog("INFO","WEB","Profile[%d] updated via HTTP", pi);
     }
   } else {
-    _sendError("Profile parse failed");
+    _sendError("Profil invalide");
   }
 }
 
 void WebUI::_handleApiPostSchedule() {
   if (!_scheduleMgr) { _sendError("No ScheduleManager"); return; }
+  if (!StorageManager::hasCalendarStorage()) {
+    _sendError("Calendrier indisponible : EEPROM 24C32 ou plus requise", 409);
+    return;
+  }
 
   JsonDocument doc;
   if (!_parseBody(doc)) return;
 
-  char jsonBuf[1024];
-  serializeJson(doc, jsonBuf, sizeof(jsonBuf));
+  String jsonBuf;
+  serializeJson(doc, jsonBuf);
 
-  if (_scheduleMgr->scheduleFromJson(jsonBuf)) {
+  if (_scheduleMgr->scheduleFromJson(jsonBuf.c_str())) {
     _sendOk("schedule saved");
   } else {
-    _sendError("Schedule parse failed");
+    _sendError("Assignations invalides");
   }
 }
 
@@ -1039,14 +1128,14 @@ void WebUI::_handleApiPostZone() {
   const char* cmd  = doc["cmd"]  | "";
 
   if (zone < 1 || zone > NUM_ZONES || cmd[0] == '\0') {
-    _sendError("Invalid zone or cmd");
+    _sendError("Zone ou commande invalide");
     return;
   }
 
   bool ok = _cmdHandler->handle(zone, cmd,
                                  CommandOrigin::USER,
                                  CommandSource::SRC_WS);
-  ok ? _sendOk() : _sendError("Command rejected");
+  ok ? _sendOk() : _sendError("Commande refusée (priorité Tempo/délestage ou zone verrouillée)");
 }
 
 void WebUI::_handleApiConfigTempo() {
@@ -1140,6 +1229,23 @@ void WebUI::_handleApiEepromErase() {
   ESP.restart();
 }
 
+void WebUI::_handleApiReboot() {
+  JsonDocument doc;
+  if (!_parseBody(doc)) return;
+
+  if (!(doc["confirm"] | false)) {
+    _sendError("Confirmation required", 400);
+    return;
+  }
+
+  _sendOk("restarting");
+  if (_publisher) {
+    _publisher->publishLog("WARN", "WEB", "Reboot requested via HTTP");
+  }
+  delay(500);          // laisse partir la réponse HTTP et le log MQTT
+  ESP.restart();
+}
+
 void WebUI::_handleApiDebug() {
   String out = "=== DEBUG DUMP ===\n";
 
@@ -1149,8 +1255,32 @@ void WebUI::_handleApiDebug() {
   if (_scheduleMgr) { _scheduleMgr->dumpAll(); }
   if (_storageMgr)  { _storageMgr->dump(); }
 
-  out += "Dump sent to Serial.";
+  out += LOG_RAW_ENABLED() ? "Dump sent to Serial."
+                           : "Serial dump disabled (log level < DEBUG).";
+  _requests++;
   _server.send(200, "text/plain; charset=utf-8", out);
+}
+
+void WebUI::_handleApiHealth() {
+  static char buf[1600];   // statique : hors pile de loopTask
+  supervisor.toJson(buf, sizeof(buf));
+  _sendJson(buf);
+}
+
+void WebUI::_handleApiTrace() {
+  String out;
+  supervisor.traceToJson(out);
+  _sendJson(out.c_str());
+}
+
+void WebUI::_handleApiConfigLog() {
+  if (!_publisher) { _sendError("No Publisher"); return; }
+  if (!_server.hasArg("plain")) { _sendError("No body"); return; }
+  if (!_publisher->applyLogConfigJson(_server.arg("plain").c_str())) {
+    _sendError("JSON parse error");
+    return;
+  }
+  _sendOk("log config saved");
 }
 
 void WebUI::_handleNotFound() {
@@ -1162,6 +1292,7 @@ void WebUI::_handleNotFound() {
 // =============================================================================
 
 void WebUI::_sendJson(const char* json, int code) {
+  _requests++;
   _server.sendHeader("Access-Control-Allow-Origin", "*");
   _server.send(code, "application/json; charset=utf-8", json);
 }
@@ -1176,7 +1307,7 @@ void WebUI::_sendError(const char* msg, int code) {
   char buf[128];
   snprintf(buf, sizeof(buf), "{\"status\":\"error\",\"msg\":\"%s\"}", msg);
   _sendJson(buf, code);
-  LOG(LOG_WEB, "HTTP error: %s", msg);
+  LOG_W(LOG_WEB, "HTTP error: %s", msg);
 }
 
 bool WebUI::_parseBody(JsonDocument& doc) {
