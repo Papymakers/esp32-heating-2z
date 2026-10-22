@@ -289,7 +289,7 @@ void Publisher::publishTempoState(const TempoState& state,
   doc["forceHG"]  = state.forceHG;
   doc["tomorrow"] = tempoColorToStr(tomorrow);
   char buf[256]; serializeJson(doc, buf, sizeof(buf));
-  _publishAndBroadcast(MQTT_TOPIC_TEMPO, buf);
+  _publishAndBroadcast(MQTT_TOPIC_TEMPO, buf, true);
   // tempoValues publié chaque minute depuis publishLinkyValues avec codes TIC bruts
 }
 
@@ -618,8 +618,8 @@ bool Publisher::_mqttPublish(const char* topic, const char* payload,
   return _impl->mqttClient.publish(topic, payload, retain);
 }
 
-void Publisher::_publishAndBroadcast(const char* mqttTopic, const char* json) {
-  _mqttPublish(mqttTopic, json, false);
+void Publisher::_publishAndBroadcast(const char* mqttTopic, const char* json, bool retain) {
+  _mqttPublish(mqttTopic, json, retain);
   sseBroadcast(json);
 }
 

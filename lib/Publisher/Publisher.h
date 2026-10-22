@@ -135,7 +135,7 @@ private:
 
   // Privés
   bool _mqttPublish(const char* topic, const char* payload, bool retain = false);
-  void _publishAndBroadcast(const char* mqttTopic, const char* json);
+  void _publishAndBroadcast(const char* mqttTopic, const char* json, bool retain = false);
   void _buildZoneJson(uint8_t zoneId, char* buf, size_t bufLen) const;
   void _addHeader(char* buf, size_t bufLen) const;
 
