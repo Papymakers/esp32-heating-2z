@@ -6,6 +6,21 @@ Le format s'appuie sur [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/),
 et le projet suit un versionnage de type [SemVer](https://semver.org/lang/fr/)
 adapté (suffixe `-2Z` pour la variante 2 zones).
 
+## [5.1.7-2Z] — 2026-10-22
+
+### Modifié
+- Le topic `heatingCtrl_v4/tempo` est publié **retenu** (retain) : un client qui se
+  connecte après coup (dashboard, MQTT Explorer) reçoit aussitôt l'état Tempo
+  (option activée, couleur, période, HG forcé, couleur du lendemain).
+  `_publishAndBroadcast()` accepte un paramètre `retain` (faux par défaut : les autres
+  topics, qui changent en permanence, ne sont pas retenus).
+- L'état Tempo est republié à chaque connexion MQTT, en plus des changements d'option,
+  de couleur ou de période.
+
+### Corrigé
+- Horodatage `ts` des commandes publiées au changement de minute : il portait la seconde
+  précédente (19:59:59 pour un créneau de 20:00).
+
 ## [5.1.6-2Z] — 2026-10-21
 
 Refonte du firmware depuis la 4.1-2Z. Notes techniques détaillées (supervision,
@@ -125,6 +140,7 @@ carte mémoire EEPROM, afficheurs, NTP, historique des révisions 5.0 à 5.1.6) 
 - Interface Web embarquée et communication MQTT.
 - Persistance des états en EEPROM I2C (24C02 / 24C32).
 
+[5.1.7-2Z]: https://github.com/papymakers/esp32-heating-2z/releases/tag/v5.1.7-2Z
 [5.1.6-2Z]: https://github.com/papymakers/esp32-heating-2z/releases/tag/v5.1.6-2Z
 [4.1-2Z]: https://github.com/papymakers/esp32-heating-2z/releases/tag/v4.1-2Z
 [4.0-2Z]: https://github.com/papymakers/esp32-heating-2z/releases/tag/v4.0-2Z

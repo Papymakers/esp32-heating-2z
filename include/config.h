@@ -14,7 +14,7 @@
 // =============================================================================
 
 inline constexpr char FW_NAME[]    = "ESP32_Heating";
-inline constexpr char FW_VERSION[] = "5.1.6-2Z"; // v5.1.6 : dérogation manuelle
+inline constexpr char FW_VERSION[] = "5.1.7-2Z"; // v5.1.7 : topic tempo retenu
 #define BUILD_ID __DATE__ " " __TIME__
 
 inline void getVersion(char* buffer, size_t size) {

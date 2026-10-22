@@ -1,8 +1,8 @@
 # Naucrate 2 zones — notes techniques du firmware v5
 
-Ce document détaille les évolutions résumées dans l'entrée `[5.1.6-2Z]` du [CHANGELOG](../CHANGELOG.md) : état actuel, puis historique des révisions internes 5.0 à 5.1.6 (non publiées séparément), de la plus récente à la plus ancienne.
+Ce document détaille les évolutions résumées dans les entrées 5.1.x du [CHANGELOG](../CHANGELOG.md) : état actuel, puis historique des révisions 5.0 à 5.1.7 (5.0 à 5.1.5 non publiées séparément), de la plus récente à la plus ancienne.
 
-## État actuel : v5.1.6-2Z
+## État actuel : v5.1.7-2Z
 
 Gestionnaire de chauffage fil pilote 2 zones sur ESP32-C6-DevKitC-1-N8 : lecture TIC Linky, Tempo EDF, délestage, calendrier, MQTT et interface web.
 
@@ -13,6 +13,7 @@ Gestionnaire de chauffage fil pilote 2 zones sur ESP32-C6-DevKitC-1-N8 : lecture
 | Heure | NTP, fuseau Europe/Paris |
 | Calendrier | 8 profils, créneaux de 30 min, activation mémorisée ; dérogation manuelle jusqu'au prochain changement du calendrier |
 | Linky | index journalier confirmé par ACK du collecteur + forçage manuel (`newHeating/IdxCompteur/ack` et `/request`, cf. Papymakers/energy-index-logger) |
+| Tempo (MQTT) | topic `heatingCtrl_v4/tempo` retenu, republié à chaque connexion MQTT |
 | Supervision | Supervisor (`heatingCtrl_v4/health`, `/api/health`, `/api/trace`) et Logger réglable à chaud (`heatingCtrl_v4/log/set`) |
 | MQTT | identifiant `naucrate-2z-xxxxxx` (MAC) ; topics `heatingCtrl_v4/...` et `newHeating/...` inchangés |
 | Environnement PlatformIO | `naucrate-2z` |
@@ -22,6 +23,18 @@ Gestionnaire de chauffage fil pilote 2 zones sur ESP32-C6-DevKitC-1-N8 : lecture
 **Reste à observer en fonctionnement** : séquence Confort −2 (CM2) sur radiateur, délestage réel, sortie d'une journée rouge Tempo, publication des index à 23 h, fin de dérogation manuelle, afficheur OLED.
 
 Les mentions « statut » et « à valider » des sections suivantes sont celles de la date de chaque révision.
+
+---
+
+# Naucrate 2 zones — v5.1.7-2Z
+
+**Topic Tempo retenu** (demande du dashboard Raspberry Pi) et horodatage corrigé.
+
+- `Publisher::_publishAndBroadcast(topic, json, retain = false)` : nouveau paramètre `retain`, transmis à `_mqttPublish()`. Seul `publishTempoState()` passe `true` ; `linky`, `health`, zones, logs restent non retenus.
+- `TempoManager::publishState()` (public) est appelé dans `handleMqttEdge()` à chaque connexion MQTT, juste après `publishFullState()` : le message retenu existe dès le démarrage, sans attendre un changement d'option, de couleur ou de période.
+- `onMinuteTick()` met à jour l'horodatage du Publisher avant d'appeler Linky, calendrier et Tempo : les commandes publiées au changement de minute portent la bonne seconde.
+
+**Vérification** : sans rien basculer, `mosquitto_sub -h 192.168.1.20 -t heatingCtrl_v4/tempo -v -W 5 -C 1` affiche l'état en moins d'une seconde.
 
 ---
 

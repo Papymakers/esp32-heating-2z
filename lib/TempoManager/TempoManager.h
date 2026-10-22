@@ -164,6 +164,12 @@ private:
 
   // Publie l'état Tempo via MQTT + WebSocket
   void _publishState();
+
+public:
+  // Republie l'état Tempo (retenu) — appelé à chaque connexion MQTT
+  void publishState() { _publishState(); }
+
+private:
 };
 
 // Instance globale

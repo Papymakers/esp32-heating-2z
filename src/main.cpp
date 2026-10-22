@@ -355,6 +355,10 @@ static void onMinuteTick(const struct tm& t, uint8_t dow) {
   uint8_t day   = (uint8_t)t.tm_mday;
   uint8_t month = (uint8_t)(t.tm_mon + 1);
 
+  // Horodatage à jour AVANT les publications déclenchées par ce tick
+  // (sinon elles portaient la seconde précédente, ex. 19:59:59 pour 20:00)
+  publisher.setTimestamp((uint32_t)hh * 3600UL + (uint32_t)mm * 60UL + (uint32_t)t.tm_sec);
+
   LOG_D(LOG_CLOCK, "Tick %02u:%02u %02u/%02u dow=%u", hh, mm, day, month, dow);
   scheduleManager.setDayOfWeek(dow);
   linkyReader.onClock(hh, mm, day, month);      // index journaliers 23 h
@@ -510,6 +514,7 @@ static void handleMqttEdge() {
     }
     supervisor.note(TraceNote::MQTT_CONNECTED, publisher.getMqttConnectCount());
     publisher.publishFullState();
+    tempoManager.publishState();   // topic tempo retenu : état dès la connexion
     LOG(LOG_MAIN, "MQTT up — full state published");
   } else {
     LOG_W(LOG_MAIN, "MQTT down — running locally");
